@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<ExtensionManifest Version="11.0" ExtensionBundleId="com.automacaoedicao.premiere" ExtensionBundleVersion="2.9.1"
+<ExtensionManifest Version="11.0" ExtensionBundleId="com.automacaoedicao.premiere" ExtensionBundleVersion="3.0.0"
     ExtensionBundleName="Rhythm" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
   <ExtensionList>
-    <Extension Id="com.automacaoedicao.premiere.panel" Version="2.9.1" />
+    <Extension Id="com.automacaoedicao.premiere.panel" Version="3.0.0" />
   </ExtensionList>
   <ExecutionEnvironment>
     <HostList>

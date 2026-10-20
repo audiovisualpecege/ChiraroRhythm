@@ -84,18 +84,26 @@ Para não publicar material comercial nem dados de produções:
 
 ## Instalar
 
-### Como extensão de verdade (ZXP assinado)
-1. Coloque o `ZXPSignCmd.exe` da Adobe em `tools\bin\`
-   ([CEP-Resources/ZXPSignCMD](https://github.com/Adobe-CEP/CEP-Resources/tree/master/ZXPSignCMD)).
-2. `powershell -ExecutionPolicy Bypass -File tools\build-zxp.ps1` → gera `dist\Rhythm-<versão>.zxp`
-3. `powershell -ExecutionPolicy Bypass -File tools\install.ps1` → instala com o
-   instalador oficial da Adobe (vem com o Creative Cloud).
-4. Reabra o Premiere: **Janela › Extensões › Rhythm**.
+Baixe o `Rhythm-<versão>.exe` na página de
+[Releases](https://github.com/audiovisualpecege/ChiraroRhythm/releases/latest) e abra.
+O mesmo arquivo **instala, atualiza, reinstala e desinstala**: ele vê se o Rhythm já
+está no computador e oferece o que faz sentido. Com o Premiere aberto, pede para
+fechar antes (nunca fecha sozinho). Desinstalar mantém as configurações do painel.
+Leva junto o ffmpeg da sincronização por imagem (pula se já houver um que sirva).
 
-O `.zxp` pode ser enviado para outras pessoas: elas instalam com o
-`tools\install.ps1`, com o próprio Creative Cloud ou com qualquer instalador
-de ZXP (ex.: ZXPInstaller / Anastasiy's Extension Manager). Não precisa de
-modo desenvolvedor.
+Depois da primeira instalação, as versões novas aparecem **dentro do painel**: um
+botão "Atualizar para X" no topo baixa o instalador, e a instalação termina sozinha
+quando você fecha o Premiere.
+
+O Windows pode avisar que o instalador não é assinado ("Executar assim mesmo").
+
+### Gerar o instalador
+1. Coloque o `ZXPSignCmd.exe` da Adobe em `tools\bin\`
+   ([CEP-Resources/ZXPSignCMD](https://github.com/Adobe-CEP/CEP-Resources/tree/master/ZXPSignCMD))
+   e o `ffmpeg.exe` em `tools\bin\ffmpeg\`.
+2. `powershell -ExecutionPolicy Bypass -File tools\build-zxp.ps1` → `dist\Rhythm-<versão>.zxp`
+3. `powershell -ExecutionPolicy Bypass -File tools\build-exe.ps1` → `dist\Rhythm-<versão>.exe`
+   (3.0.0 → `Rhythm-3.0.exe`). Linha de comando: `/silencioso`, `/desinstalar /silencioso`.
 
 ### Modo desenvolvimento
 `powershell -ExecutionPolicy Bypass -File tools\dev-link.ps1` liga a pasta
@@ -118,7 +126,7 @@ extension/                 ← o que vai dentro do .zxp
   js/tools/                uma aba por arquivo (+ interleavePlan.js, lógica pura)
 dev/                       prévia da interface no navegador, com Premiere simulado
 test/run-tests.js          testes da lógica: node test/run-tests.js
-tools/                     dev-link, build-zxp, install
+tools/                     dev-link, build-zxp, build-exe (instalador único), install, publish-github
 ```
 
 ## Nova aba de automação

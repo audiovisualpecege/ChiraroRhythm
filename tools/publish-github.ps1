@@ -10,7 +10,9 @@
     powershell -ExecutionPolicy Bypass -File tools\publish-github.ps1 -Notas "o que mudou" [-SemRelease] [-Ensaio]
       -Ensaio     só confere e mostra o que seria enviado
       -SemRelease envia o código e a tag, sem criar o Release
-      -Anexos     arquivos para anexar ao Release (só os que não levam a fonte Altivo)
+      -Anexos     outros arquivos para anexar ao Release
+      O instalador dist\Rhythm-<versão>.exe vai anexado sempre (o botão "Atualizar" do painel baixa
+      dele; decisão do usuário 20/10/2026: o .exe leva a fonte Altivo e a claquete e fica público)
       -NotasArquivo  lê as notas de um arquivo (.md)
       -Substituir    SÓ NA 1ª PUBLICAÇÃO: troca o histórico do GitHub pelo daqui (force push) — apaga o que havia lá
 #>
@@ -29,6 +31,9 @@ try {
   $manifest = [xml](Get-Content (Join-Path $root 'extension\CSXS\manifest.xml') -Raw -Encoding UTF8)
   $versao = $manifest.ExtensionManifest.ExtensionBundleVersion
   $tag = "v$versao"
+  $pv = $versao.Split('.')
+  $instalador = Join-Path $root ("dist\Rhythm-{0}.exe" -f $(if ($pv[2] -eq '0') { "$($pv[0]).$($pv[1])" } else { $versao }))
+  if (-not $SemRelease -and -not (Test-Path $instalador)) { throw "falta o instalador $instalador (rode build-zxp e build-exe antes)" }
   Write-Host "Rhythm $versao → $repo"
 
   if (-not (Test-Path (Join-Path $root '.git'))) {
@@ -68,23 +73,33 @@ try {
   if ($achados) { & $git reset -q; throw "termos bloqueados encontrados (nada foi enviado):`n  $($achados -join "`n  ")" }
 
   $novos = @(& $git diff --cached --name-status)
+  if (-not $SemRelease) { Write-Host "instalador no Release: $instalador ($([math]::Round((Get-Item $instalador).Length / 1MB, 1)) MB)" }
   Write-Host "conferido: $($arquivos.Count) arquivos, nenhum proibido, nenhum termo bloqueado · mudanças: $($novos.Count)"
   if ($Ensaio) { $novos | Select-Object -First 60 | ForEach-Object { Write-Host "  $_" }; & $git reset -q; Write-Host 'ensaio: nada enviado'; return }
 
+  # mensagem e notas vão por ARQUIVO: o PowerShell 5.1 quebra argumentos com aspas ao chamar git/gh
+  $notasFile = Join-Path $env:TEMP "rhythm-notas-$([guid]::NewGuid()).md"
+  [IO.File]::WriteAllText($notasFile, $(if ($Notas) { $Notas } else { "Rhythm $versao" }), (New-Object Text.UTF8Encoding $false))
+  $msgFile = Join-Path $env:TEMP "rhythm-msg-$([guid]::NewGuid()).txt"
+  [IO.File]::WriteAllText($msgFile, "Rhythm $versao" + $(if ($Notas) { "`n`n$Notas" } else { '' }), (New-Object Text.UTF8Encoding $false))
   if ($novos.Count) {
-    $msg = "Rhythm $versao"
-    if ($Notas) { $msg += "`n`n$Notas" }
-    & $git commit -q -m $msg
+    & $git commit -q -F $msgFile
+    if ($LASTEXITCODE) { throw 'o commit falhou (nada foi enviado)' }
   }
+  Remove-Item $msgFile -ErrorAction SilentlyContinue
   if (-not (& $git tag --list $tag)) { & $git tag $tag }
+  if ((& $git rev-parse "$tag^{commit}") -ne (& $git rev-parse HEAD)) { throw "a tag $tag já existe e não aponta para o commit atual" }
   if ($Substituir) { & $git push --force -u origin main } else { & $git push -u origin main }
   if ($LASTEXITCODE) { throw 'o envio para o GitHub falhou (nada mais foi feito)' }
   & $git push origin $tag
   if (-not $SemRelease) {
     $titulo = "Chiaro Rhythm $tag"
-    $args2 = @('release', 'create', $tag, '-R', $repo, '--title', $titulo, '--notes', ($(if ($Notas) { $Notas } else { "Rhythm $versao" })))
+    $args2 = @('release', 'create', $tag, '-R', $repo, '--title', $titulo, '--notes-file', $notasFile)
+    $args2 += $instalador
     foreach ($an in $Anexos) { if (-not (Test-Path $an)) { throw "anexo não existe: $an" }; $args2 += $an }
     & $gh @args2
+    if ($LASTEXITCODE) { throw 'o código foi enviado, mas o Release não foi criado' }
   }
+  Remove-Item $notasFile -ErrorAction SilentlyContinue
   Write-Host "publicado: https://github.com/$repo/releases/tag/$tag"
 } finally { Pop-Location }

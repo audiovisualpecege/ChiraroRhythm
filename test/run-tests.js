@@ -493,6 +493,65 @@ const CL = require(path.join(base, "sync", "syncClap.js"));
   });
 }
 
+// ---------------------------------------------------------------- atualização (botão do painel)
+{
+  const U = require(path.join(base, "core", "updater.js"));
+  const rel = (tag, extra = {}) => Object.assign({
+    tag_name: tag, draft: false, prerelease: false, body: "notas", html_url: "https://x/rel",
+    assets: [{ name: `Rhythm-${U.shortVersion(tag.replace(/^v/, ""))}.exe`, browser_download_url: "http://x/a.exe", size: 10 }],
+  }, extra);
+
+  test("atualização: compara versões e encurta o nome", () => {
+    assert.strictEqual(U.compareVersions("3.0.0", "2.9.1"), 1);
+    assert.strictEqual(U.compareVersions("v3.0", "3.0.0"), 0);
+    assert.strictEqual(U.compareVersions("3.0.1", "3.0.10"), -1);
+    assert.strictEqual(U.compareVersions("2.10.0", "2.9.9"), 1);
+    assert.strictEqual(U.shortVersion("3.0.0"), "3.0");
+    assert.strictEqual(U.shortVersion("3.0.1"), "3.0.1");
+  });
+
+  test("atualização: só oferece Release mais novo, publicado e com o .exe", () => {
+    const u = U.pickUpdate(rel("v3.0.0"), "2.9.0");
+    assert(u && u.version === "3.0.0" && u.name === "Rhythm-3.0.exe" && u.notes === "notas");
+    assert.strictEqual(U.pickUpdate(rel("v3.0.0"), "3.0.0"), null);
+    assert.strictEqual(U.pickUpdate(rel("v2.9.1"), "3.0.0"), null);
+    assert.strictEqual(U.pickUpdate(rel("v3.0.1", { prerelease: true }), "3.0.0"), null);
+    assert.strictEqual(U.pickUpdate(rel("v3.0.1", { draft: true }), "3.0.0"), null);
+    assert.strictEqual(U.pickUpdate(rel("v3.0.1", { assets: [{ name: "notas.txt", browser_download_url: "x" }] }), "3.0.0"), null);
+    assert.strictEqual(U.pickUpdate(null, "3.0.0"), null);
+  });
+
+  test("atualização: consulta e baixa (com redirecionamento) de um servidor local", async () => {
+    const http = require("http");
+    const payload = Buffer.alloc(200000, 7);
+    const srv = http.createServer((req, res) => {
+      const port = srv.address().port;
+      if (req.url === "/latest") {
+        res.setHeader("Content-Type", "application/json");
+        res.end(JSON.stringify(rel("v3.0.1", { assets: [{ name: "Rhythm-3.0.1.exe", browser_download_url: `http://127.0.0.1:${port}/redir`, size: payload.length }] })));
+      } else if (req.url === "/redir") { res.writeHead(302, { Location: "/file" }); res.end(); }
+      else if (req.url === "/file") { res.setHeader("Content-Length", payload.length); res.end(payload); }
+      else { res.writeHead(404); res.end(); }
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const port = srv.address().port;
+    global.localStorage = { getItem: (k) => (k === "rhythm.updateUrl" ? `http://127.0.0.1:${port}/latest` : null) };
+    try {
+      const u = await U.check("3.0.0");
+      assert(u && u.version === "3.0.1");
+      let last = 0;
+      const dest = await U.download(u, (f) => (last = f));
+      assert.strictEqual(fs.statSync(dest).size, payload.length);
+      assert(last > 0.99);
+      assert.strictEqual(await U.check("3.0.1"), null);
+      fs.rmSync(path.dirname(dest), { recursive: true, force: true });
+    } finally {
+      delete global.localStorage;
+      srv.close();
+    }
+  });
+}
+
 // ---------------------------------------------------------------- mídia real (opcional)
 for (const f of (process.env.AE_REAL_MEDIA || "").split(";").filter(Boolean)) {
   test(`mídia real: ${path.basename(f)}`, async () => {

@@ -110,5 +110,6 @@
   }, 400);
 
   app.refreshInfo();
+  if (window.AEUpdate) AEUpdate.mount($("btnUpdate"), $("updateNote"));
   window.AEApp = app;
 })();

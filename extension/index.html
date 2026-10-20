@@ -13,6 +13,10 @@
           <img class="brand-icon" src="img/rhythm-icon.svg" alt="" />
           <h1>Rhythm</h1>
         </div>
+        <button class="update-btn" id="btnUpdate" type="button" hidden>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.5v8M4.5 7 8 10.5 11.5 7M3 13.5h10"/></svg>
+          <span class="update-btn-label"></span>
+        </button>
         <div class="seq-chip" id="seqChip" title="Sequência ativa na Timeline">
           <span class="seq-chip-name" id="seqName">Procurando sequência…</span>
           <button class="icon-btn" id="btnRefresh" type="button" aria-label="Atualizar informações da sequência" title="Atualizar">
@@ -20,6 +24,7 @@
           </button>
         </div>
       </div>
+      <p class="update-note" id="updateNote" hidden></p>
       <nav class="tab-strip" role="tablist" id="tabStrip"></nav>
     </header>
 
@@ -383,6 +388,7 @@
   <script src="js/core/host.js"></script>
   <script src="js/core/ui.js"></script>
   <script src="js/core/store.js"></script>
+  <script src="js/core/updater.js"></script>
   <script src="js/audio/containers.js"></script>
   <script src="js/audio/levels.js"></script>
   <script src="js/audio/decode.js"></script>
