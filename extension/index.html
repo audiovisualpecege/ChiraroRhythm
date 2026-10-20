@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Rhythm</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="panel">
+    <header class="panel-header">
+      <div class="header-row">
+        <div class="brand">
+          <img class="brand-icon" src="img/rhythm-icon.svg" alt="" />
+          <h1>Rhythm</h1>
+        </div>
+        <div class="seq-chip" id="seqChip" title="Sequência ativa na Timeline">
+          <span class="seq-chip-name" id="seqName">Procurando sequência…</span>
+          <button class="icon-btn" id="btnRefresh" type="button" aria-label="Atualizar informações da sequência" title="Atualizar">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9M13.5 2.5v3h-3"/></svg>
+          </button>
+        </div>
+      </div>
+      <nav class="tab-strip" role="tablist" id="tabStrip"></nav>
+    </header>
+
+    <main class="panel-body" id="panelBody">
+
+      <!-- ============================================================ -->
+      <!-- ABA 1 — CORTADOR DE SILÊNCIOS                                  -->
+      <!-- ============================================================ -->
+      <section class="tool-view" id="tool-silence" data-tool-title="Silêncios" role="tabpanel">
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">01</span> Fonte</h2>
+          <div class="field">
+            <div class="seg" id="silScope" role="group" aria-label="O que analisar">
+              <button type="button" data-value="sequence" aria-pressed="true">Sequência inteira</button>
+              <button type="button" data-value="selection" aria-pressed="false">Clipes selecionados</button>
+            </div>
+          </div>
+          <div class="field" style="margin-top:10px">
+            <span class="field-label">Faixas de áudio analisadas</span>
+            <div class="track-list" id="silTracks"></div>
+            <p class="hint" id="silScopeHint">O corte é aplicado em todas as faixas destravadas (vídeo e áudio), para manter o sincronismo. Trave uma faixa para protegê-la.</p>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">02</span> Detecção</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label class="field-label" for="silThreshold">Sensibilidade</label>
+              <div class="input-unit"><input class="input" id="silThreshold" type="number" min="-80" max="-5" step="1" value="-40" /><span class="unit">dB</span></div>
+            </div>
+            <div class="field" style="justify-content:flex-end">
+              <label class="switch"><input type="checkbox" id="silAuto" /><span class="switch-track"></span>Ajuste automático</label>
+            </div>
+            <p class="hint field--full" id="silAutoHint" hidden></p>
+
+            <div class="field">
+              <label class="field-label" for="silMinSilence">Silêncio mínimo</label>
+              <div class="input-unit"><input class="input" id="silMinSilence" type="number" min="0.05" max="30" step="0.05" value="0.5" /><span class="unit">s</span></div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="silWindow">Janela de análise</label>
+              <div class="input-unit"><input class="input" id="silWindow" type="number" min="1" max="500" step="1" value="20" /><span class="unit">ms</span></div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="silMarginAfter">Margem depois da fala</label>
+              <div class="input-unit"><input class="input" id="silMarginAfter" type="number" min="0" max="3000" step="10" value="100" /><span class="unit">ms</span></div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="silMarginBefore">Margem antes da fala</label>
+              <div class="input-unit"><input class="input" id="silMarginBefore" type="number" min="0" max="3000" step="10" value="100" /><span class="unit">ms</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">03</span> Prévia</h2>
+          <button class="preview-summary" id="silSummary" type="button" aria-expanded="false" disabled>
+            <span class="preview-summary-text" id="silSummaryText">Clique em <b style="color:var(--text)">Analisar Áudio</b> para ler a timeline.</span>
+            <span class="chevron" id="silChevron" hidden>▾</span>
+          </button>
+
+          <div id="silExpanded" hidden>
+            <div class="ratio" id="silRatio">
+              <div class="ratio-bar"><div class="ratio-keep" id="silRatioKeep"></div><div class="ratio-cut" id="silRatioCut"></div></div>
+              <div class="ratio-legend"><span id="silRatioFrom"></span><span id="silRatioTo"></span></div>
+            </div>
+
+            <div class="viz">
+              <div class="viz-toolbar">
+                <p class="hint">Clique: leva o cursor do Premiere · Roda: zoom · Arraste: navega · Duplo clique num corte: liga/desliga</p>
+                <button class="btn btn--ghost btn--sm" id="vizZoomOut" type="button" aria-label="Afastar">−</button>
+                <button class="btn btn--ghost btn--sm" id="vizZoomIn" type="button" aria-label="Aproximar">+</button>
+                <button class="btn btn--ghost btn--sm" id="vizFit" type="button">Tudo</button>
+              </div>
+              <div class="viz-canvas-wrap" id="vizWrap">
+                <canvas id="vizCanvas"></canvas>
+                <div class="viz-tooltip" id="vizTooltip" hidden></div>
+              </div>
+              <div class="viz-legend">
+                <span><i style="background:var(--cut)"></i>Corte</span>
+                <span><i style="background:#8F8AA0"></i>Áudio mantido</span>
+                <span><i style="border:1px dashed var(--threshold)"></i>Limiar</span>
+                <span><i style="background:var(--playhead)"></i>Cursor do Premiere</span>
+              </div>
+            </div>
+
+            <div class="cuts-list" id="silCutsList"></div>
+          </div>
+
+          <div class="notice" id="silNotice" hidden></div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">04</span> Ao aplicar</h2>
+          <label class="switch"><input type="checkbox" id="silBackup" /><span class="switch-track"></span>Criar backup da sequência antes de cortar</label>
+          <p class="hint" style="margin-top:6px">Marcadores vermelhos são criados sempre: se algum corte falhar, o intervalo fica marcado para corte manual.</p>
+        </div>
+
+        <div class="tool-footer">
+          <div class="progress" id="silProgress" hidden><div class="progress-bar" id="silProgressBar"></div></div>
+          <div class="actions">
+            <button class="btn btn--outline" id="silAnalyze" type="button">Analisar Áudio</button>
+            <button class="btn btn--primary" id="silApply" type="button" disabled>Aplicar Cortes</button>
+          </div>
+          <p class="status" id="silStatus" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- ABA 2 — ALTERNADOR DE ZOOM                                     -->
+      <!-- ============================================================ -->
+      <section class="tool-view" id="tool-zoom" data-tool-title="Zoom" role="tabpanel" hidden>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">01</span> Fonte</h2>
+          <div class="seg" id="zmScope" role="group" aria-label="Onde aplicar">
+            <button type="button" data-value="selected" aria-pressed="false">Selecionados</button>
+            <button type="button" data-value="track" aria-pressed="true">Faixa</button>
+            <button type="button" data-value="all" aria-pressed="false">Todas as faixas</button>
+          </div>
+          <div class="field" style="margin-top:10px">
+            <label class="field-label" for="zmTrack">Faixa de vídeo</label>
+            <select class="input" id="zmTrack"></select>
+          </div>
+          <p class="hint" style="margin-top:8px">Cada clipe é um corte. Recebem zoom vídeos, imagens e sequências aninhadas — gráficos, textos e camadas de ajuste ficam de fora. Cada faixa conta o ciclo separado.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">02</span> Escalas</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label class="field-label" for="zmMain">Escala do zoom</label>
+              <div class="input-unit"><input class="input" id="zmMain" type="number" min="50" max="300" step="1" value="125" /><span class="unit">%</span></div>
+            </div>
+            <div class="field">
+              <div class="field-label"><label class="switch" style="display:inline-flex"><input type="checkbox" id="zmSecondOn" aria-label="Ativar segunda escala" /><span class="switch-track"></span>Segunda escala</label></div>
+              <div class="input-unit"><input class="input" id="zmSecond" type="number" min="50" max="300" step="1" value="115" /><span class="unit">%</span></div>
+            </div>
+          </div>
+          <label class="switch" style="margin-top:10px"><input type="checkbox" id="zmStartZoom" /><span class="switch-track"></span>Começar com zoom no 1º clipe</label>
+          <div class="cycle" id="zmCycle" aria-label="Ciclo de escalas"></div>
+          <p class="hint hint--warn" id="zmBorderWarn" hidden>Escala abaixo de 100%: o quadro fica menor que a tela e aparece borda (ou a faixa de baixo).</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">03</span> Mira do zoom</h2>
+          <div class="field">
+            <div class="range-row"><label class="field-label" for="zmX">Posição X</label><output class="mono" id="zmXOut">50%</output></div>
+            <input class="range" id="zmX" type="range" min="0" max="100" step="1" value="50" />
+          </div>
+          <div class="field" style="margin-top:8px">
+            <div class="range-row"><label class="field-label" for="zmY">Posição Y</label><output class="mono" id="zmYOut">50%</output></div>
+            <input class="range" id="zmY" type="range" min="0" max="100" step="1" value="50" />
+          </div>
+          <p class="hint" style="margin-top:6px">O ponto escolhido fica parado na tela enquanto o resto aproxima. Duplo clique na barra volta ao centro.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">04</span> Modo</h2>
+          <div class="seg" id="zmMode" role="group" aria-label="Modo do zoom">
+            <button type="button" data-value="fixed" aria-pressed="true">Fixo</button>
+            <button type="button" data-value="moving" aria-pressed="false">Em movimento</button>
+          </div>
+          <div class="grid-2" style="margin-top:10px">
+            <div class="field field--full">
+              <span class="field-label">Direção</span>
+              <div class="seg" id="zmDirection" role="group" aria-label="Direção do movimento">
+                <button type="button" data-value="in" aria-pressed="true">Zoom in</button>
+                <button type="button" data-value="out" aria-pressed="false">Zoom out</button>
+                <button type="button" data-value="alternate" aria-pressed="false">Alternar</button>
+              </div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="zmIntensity">Intensidade</label>
+              <div class="input-unit"><input class="input" id="zmIntensity" type="number" min="0.5" max="50" step="0.5" value="3" /><span class="unit">+%</span></div>
+            </div>
+            <div class="field" style="justify-content:flex-end"><p class="hint" id="zmIntensityHint"></p></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">05</span> Prévia <span class="spacer"></span>
+            <button class="btn btn--ghost btn--sm" id="zmPreviewBtn" type="button">Mostrar prévia</button>
+          </h2>
+          <div id="zmPreviewBox" hidden>
+            <div class="zoom-preview"><canvas id="zmCanvas"></canvas><span class="zoom-preview-badge mono" id="zmBadge"></span></div>
+            <div class="cycle cycle--pick" id="zmPick" role="group" aria-label="Escala exibida na prévia"></div>
+            <div class="range-row" style="margin-top:6px">
+              <p class="hint" id="zmPreviewInfo"></p>
+              <button class="btn btn--ghost btn--sm" id="zmSeeInPremiere" type="button">Ver no Premiere</button>
+            </div>
+          </div>
+          <p class="hint" id="zmPreviewEmpty">Selecione um clipe de vídeo na Timeline e clique em <strong>Mostrar prévia</strong>. A prévia acompanha a seleção.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">06</span> Resumo</h2>
+          <ul class="summary-list" id="zmSummary"><li>Abra uma sequência na Timeline.</li></ul>
+        </div>
+
+        <div class="tool-footer">
+          <div class="progress" id="zmProgress" hidden><div class="progress-bar" id="zmProgressBar"></div></div>
+          <div class="actions">
+            <button class="btn btn--ghost" id="zmRemove" type="button">Remover zoom</button>
+            <button class="btn btn--primary" id="zmApply" type="button" disabled>Aplicar Zoom</button>
+          </div>
+          <p class="status" id="zmStatus" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- ABA 3 — ÁUDIO INTERCALADO (J-CUT / L-CUT)                      -->
+      <!-- ============================================================ -->
+      <section class="tool-view" id="tool-interleave" data-tool-title="Intercalado" role="tabpanel" hidden>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">01</span> Faixas</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label class="field-label" for="ilSrc">Origem</label>
+              <select class="input" id="ilSrc"></select>
+            </div>
+            <div class="field">
+              <label class="field-label" for="ilDst">Destino</label>
+              <select class="input" id="ilDst"></select>
+            </div>
+          </div>
+          <p class="hint" style="margin-top:8px">Percorre os clipes em ordem: o 1º fica na origem, o 2º vai para o destino, o 3º fica… Sempre move, nunca copia.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">02</span> Corte</h2>
+          <div class="field">
+            <div class="seg" id="ilType" role="group" aria-label="Tipo de corte">
+              <button type="button" data-value="J" aria-pressed="false">J-Cut</button>
+              <button type="button" data-value="L" aria-pressed="false">L-Cut</button>
+              <button type="button" data-value="both" aria-pressed="true">Ambos</button>
+            </div>
+          </div>
+          <svg class="il-diagram" id="ilDiagram" viewBox="0 0 300 64" role="img" aria-label="Esquema do corte"></svg>
+          <div class="grid-2" style="margin-top:8px">
+            <div class="field">
+              <label class="field-label" for="ilFrames">Duração</label>
+              <div class="input-unit"><input class="input" id="ilFrames" type="number" min="1" max="600" step="1" value="6" /><span class="unit">frames</span></div>
+            </div>
+            <div class="field" style="justify-content:flex-end">
+              <p class="hint" id="ilFramesHint"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">03</span> Resumo</h2>
+          <ul class="summary-list" id="ilSummary"><li>Escolha as faixas.</li></ul>
+          <div class="partial-list" id="ilPartial" hidden></div>
+        </div>
+
+        <div class="tool-footer">
+          <div class="actions">
+            <button class="btn btn--ghost" id="ilUndo" type="button" disabled>Desfazer Tudo</button>
+            <button class="btn btn--primary" id="ilApply" type="button" disabled>Aplicar</button>
+          </div>
+          <p class="status" id="ilStatus" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <!-- ============================================================ -->
+      <!-- ABA 4 — SINCRONIZAR (estilo PluralEyes, na própria timeline)   -->
+      <!-- ============================================================ -->
+      <section class="tool-view" id="tool-sync" data-tool-title="Sincronizar" role="tabpanel" hidden>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">01</span> Aparelhos</h2>
+          <div class="track-list device-list" id="syDevices"></div>
+          <p class="hint" id="syDevicesHint" style="margin-top:8px">Abra uma sequência na Timeline.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">02</span> Espaçamento</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label class="field-label" for="syJoinGap">Encostar pausas de até</label>
+              <div class="input-unit"><input class="input" id="syJoinGap" type="number" min="0" max="600" step="1" value="30" /><span class="unit">s</span></div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="syGapRatio">Espaço proporcional</label>
+              <div class="input-unit"><input class="input" id="syGapRatio" type="number" min="0" max="100" step="1" value="15" /><span class="unit">%</span></div>
+            </div>
+          </div>
+          <p class="hint" style="margin-top:8px">O espaço entre os grupos segue o tempo real em que as câmeras ficaram paradas (relógio de cada aparelho corrigido pelo áudio). Pausas curtas ficam encostadas; as longas viram uma fração do tempo real, no máximo 10 min.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">03</span> Imagem</h2>
+          <label class="switch"><input type="checkbox" id="syVisual" /><span class="switch-track"></span>Sincronizar por imagem (claquete · boca)</label>
+          <p class="hint" id="syVisualHint" style="margin-top:6px">Para câmeras sem som útil. Depois do áudio, os clipes de câmera que não casaram procuram primeiro a batida da claquete no começo do vídeo e o estalo dela no gravador; sem claquete, a boca de quem fala é comparada com o som do gravador. O áudio continua tendo prioridade. Mais lento: ~1 min por hora de câmera (claquete: ~10 s por arquivo).</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">04</span> Resultado</h2>
+          <ul class="summary-list" id="sySummary"></ul>
+          <div id="syResult" hidden>
+            <div class="viz">
+              <div class="viz-canvas-wrap" id="syMapWrap">
+                <canvas id="syMap"></canvas>
+                <div class="viz-tooltip" id="syTooltip" hidden></div>
+              </div>
+              <div class="viz-legend">
+                <span><i style="background:#8C4EDB"></i>Sincronizado</span>
+                <span><i style="background:#FACE95"></i>Revisar</span>
+                <span><i style="background:#5E5672"></i>Órfão</span>
+                <span><i style="background:#2C2540;border:1px solid var(--border-soft)"></i>Sem áudio</span>
+                <span id="syLegendVisual" hidden><i style="background:repeating-linear-gradient(135deg,#8C4EDB 0 3px,#3d2266 3px 5px)"></i>Pela imagem</span>
+              </div>
+            </div>
+            <div class="seg seg--sm" id="syFilter" role="group" aria-label="Filtrar lista" style="margin-top:10px">
+              <button type="button" data-value="review" aria-pressed="true">Revisar <span class="count"></span></button>
+              <button type="button" data-value="orphan" aria-pressed="false">Órfãos <span class="count"></span></button>
+              <button type="button" data-value="synced" aria-pressed="false">Sincronizados <span class="count"></span></button>
+              <button type="button" data-value="all" aria-pressed="false">Todos <span class="count"></span></button>
+            </div>
+            <div class="sync-list" id="syList"></div>
+            <p class="hint" style="margin-top:6px">Desmarque um clipe para mandá-lo para órfão (ele fica no lugar, seguindo o anterior). Depois de criar a cópia, o timecode leva o cursor até o clipe.</p>
+          </div>
+          <div class="notice" id="syNotice" hidden style="margin-top:8px"></div>
+        </div>
+
+        <div class="tool-footer">
+          <div class="progress" id="syProgress" hidden><div class="progress-bar" id="syProgressBar"></div></div>
+          <div class="actions">
+            <button class="btn btn--outline" id="syAnalyze" type="button">Analisar</button>
+            <button class="btn btn--primary" id="syCreate" type="button" disabled>Criar sequência sincronizada</button>
+          </div>
+          <button class="btn btn--ghost btn--sm" id="syDeep" type="button" hidden style="margin-top:6px">Analisar a fundo pela imagem</button>
+          <p class="status" id="syStatus" role="status" aria-live="polite"></p>
+          <div class="range-row" style="margin-top:4px">
+            <p class="hint">A leitura de áudio fica guardada para analisar de novo sem reler os arquivos.</p>
+            <button class="btn btn--ghost btn--sm" id="syClearCache" type="button" disabled>Limpar cache</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Novas automações: crie outra <section class="tool-view" data-tool-title="..."> e um js/tools/<nome>.js -->
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="modal" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <h3 id="modalTitle"></h3>
+      <p id="modalText"></p>
+      <div class="actions">
+        <button class="btn btn--ghost" id="modalCancel" type="button">Cancelar</button>
+        <button class="btn btn--primary" id="modalOk" type="button">Confirmar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/lib/CSInterface.js"></script>
+  <script src="js/core/host.js"></script>
+  <script src="js/core/ui.js"></script>
+  <script src="js/core/store.js"></script>
+  <script src="js/audio/containers.js"></script>
+  <script src="js/audio/levels.js"></script>
+  <script src="js/audio/decode.js"></script>
+  <script src="js/audio/silence.js"></script>
+  <script src="js/views/timelineView.js"></script>
+  <script src="js/tools/interleavePlan.js"></script>
+  <script src="js/tools/zoomPlan.js"></script>
+  <script src="js/tools/silenceTool.js"></script>
+  <script src="js/tools/zoomTool.js"></script>
+  <script src="js/tools/interleaveTool.js"></script>
+  <script src="js/sync/syncAudio.js"></script>
+  <script src="js/sync/syncClock.js"></script>
+  <script src="js/sync/syncCache.js"></script>
+  <script src="js/sync/syncPool.js"></script>
+  <script src="js/sync/syncMatch.js"></script>
+  <script src="js/sync/syncPlan.js"></script>
+  <script src="js/sync/syncSetup.js"></script>
+  <script src="js/sync/syncXml.js"></script>
+  <script src="js/sync/syncVisualMatch.js"></script>
+  <script src="js/sync/syncFfmpeg.js"></script>
+  <script src="js/sync/syncClap.js"></script>
+  <script src="js/sync/syncSlate.js"></script>
+  <script src="js/sync/syncVisual.js"></script>
+  <script src="js/tools/syncTool.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>

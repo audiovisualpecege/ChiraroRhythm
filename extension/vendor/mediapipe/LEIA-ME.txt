@@ -1,0 +1,11 @@
+MediaPipe Tasks Vision (@mediapipe/tasks-vision 1.1.0, npm) — Apache License 2.0
+https://github.com/google-ai-edge/mediapipe · https://www.apache.org/licenses/LICENSE-2.0
+
+Arquivos copiados sem alteração:
+  vision_bundle.mjs
+  wasm/vision_wasm_internal.js, wasm/vision_wasm_internal.wasm   (versão com SIMD; o Chromium 99 do CEP 12 tem SIMD)
+  face_landmarker.task   (modelo "Face Landmarker" float16, versão 1 —
+                          storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/)
+
+Usado pela sincronização por imagem do Rhythm (js/sync/syncFaceWorker.js) para medir
+a abertura da boca. Roda localmente; nada é enviado para fora do computador.

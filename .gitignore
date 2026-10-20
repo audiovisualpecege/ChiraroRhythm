@@ -1,0 +1,15 @@
+dist/
+tools/bin/
+tools/cert/
+dev/preview.html
+node_modules/
+dev/fixture-frame.png
+dev/fixture-envelope.js
+
+# repositório público (decisão do usuário 20/10/2026): nada de dados de clientes nem fonte comercial
+CONTEXTO.md
+extension/fonts/Altivo-*.otf
+.claude/
+# a referência da claquete é uma IMAGEM com o nome da produção e da diretora; sem ela o reconhecimento só fica desligado
+extension/img/claquete-ref.slt
+extension/.debug

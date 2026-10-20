@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="108" height="102" viewBox="0 0 108 102">
+  <!-- Rhythm: moldura aberta da Chiaro + timeline (vídeo, áudio, cursor de reprodução) -->
+  <path d="M97.7 17.6V3.2H3.2v95.6h94.5V82.7" fill="none" stroke="#F5F2FA" stroke-width="6.4"/>
+  <rect x="17" y="33" width="38" height="13" rx="6.5" fill="#8C4EDB"/>
+  <rect x="61" y="33" width="47" height="13" rx="6.5" fill="#8C4EDB"/>
+  <rect x="17" y="56" width="52" height="13" rx="6.5" fill="#F5F2FA"/>
+  <rect x="75" y="56" width="33" height="13" rx="6.5" fill="#F5F2FA"/>
+  <line x1="44" y1="24" x2="44" y2="80" stroke="#FACE95" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="44" cy="22" r="6.5" fill="#FACE95"/>
+</svg>
