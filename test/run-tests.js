@@ -550,6 +550,35 @@ const CL = require(path.join(base, "sync", "syncClap.js"));
       srv.close();
     }
   });
+
+  test("atualização: o botão aparece no painel (CSInterface real, como no CEP)", async () => {
+    const http = require("http"), vm = require("vm");
+    const extDir = path.join(__dirname, "..", "extension");
+    const srv = http.createServer((req, res) => {
+      res.setHeader("Content-Type", "application/json");
+      res.end(JSON.stringify(rel("v99.0.1")));
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const url = `http://127.0.0.1:${srv.address().port}/latest`;
+    const win = {
+      navigator: { userAgent: "Windows NT 10.0" },
+      __adobe_cep__: { getSystemPath: () => "file:///" + encodeURI(extDir.split(path.sep).join("/")) },
+      localStorage: { getItem: (k) => (k === "rhythm.updateUrl" ? url : null) },
+    };
+    win.window = win;
+    const ctx = vm.createContext(Object.assign(win, { require, module: undefined, console, setTimeout, Buffer, URL, process }));
+    // como no painel: scripts soltos no mesmo escopo global, sem SystemPath global
+    vm.runInContext(fs.readFileSync(path.join(base, "lib", "CSInterface.js"), "utf8"), ctx);
+    vm.runInContext(fs.readFileSync(path.join(base, "core", "updater.js"), "utf8"), ctx);
+    const label = { textContent: "" };
+    const btn = { hidden: true, title: "", classList: { toggle() {} }, querySelector: () => label, addEventListener() {} };
+    try {
+      ctx.AEUpdate.mount(btn, {});
+      for (let i = 0; i < 50 && btn.hidden; i++) await new Promise((r) => setTimeout(r, 50));
+      assert.strictEqual(btn.hidden, false, "o botão não apareceu");
+      assert.strictEqual(label.textContent, "Atualizar para 99.0.1");
+    } finally { srv.close(); }
+  });
 }
 
 // ---------------------------------------------------------------- mídia real (opcional)

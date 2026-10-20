@@ -83,7 +83,7 @@
 
   function currentVersion() {
     const cs = new CSInterface();
-    const xml = fs.readFileSync(path.join(cs.getSystemPath(SystemPath.EXTENSION), "CSXS", "manifest.xml"), "utf8");
+    const xml = fs.readFileSync(path.join(cs.getSystemPath(CSInterface.SystemPath.EXTENSION), "CSXS", "manifest.xml"), "utf8");
     const m = /ExtensionBundleVersion="([^"]+)"/.exec(xml);
     return m ? m[1] : null;
   }
@@ -139,6 +139,14 @@
     });
   }
 
+  /** Abre a página do Release no navegador (o CSInterface reduzido do projeto não tem openURL). */
+  function openPage(url) {
+    try {
+      if (root.cep && root.cep.util && root.cep.util.openURLInDefaultBrowser) { root.cep.util.openURLInDefaultBrowser(url); return; }
+    } catch (e) { /* tenta o Explorer */ }
+    try { cp.spawn("explorer.exe", [url], { detached: true, stdio: "ignore" }).unref(); } catch (e) { /* ignora */ }
+  }
+
   // ---------------------------------------------------------------- botão
   function mount(btn, note) {
     if (!btn || !fs) return;
@@ -157,7 +165,7 @@
     };
 
     btn.addEventListener("click", async () => {
-      if (state === "error") { try { new CSInterface().openURLInDefaultBrowser(upd.page); } catch (e) { /* ignora */ } return; }
+      if (state === "error") { openPage(upd.page); return; }
       if (state !== "idle") return;
       state = "busy";
       try {
