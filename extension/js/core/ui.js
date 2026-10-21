@@ -23,9 +23,11 @@
   /** Duração curta: 340ms / 1,25s / 2:31 */
   function formatDuration(sec) {
     if (sec < 1) return `${Math.round(sec * 1000)}ms`;
-    if (sec < 60) return `${sec.toFixed(2).replace(".", ",")}s`;
-    const m = Math.floor(sec / 60);
-    const s = Math.round(sec % 60);
+    if (sec < 59.995) return `${sec.toFixed(2).replace(".", ",")}s`;
+    // arredonda o total antes de separar: 119,6 s virava "1:60"
+    const total = Math.round(sec);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
     return `${m}:${String(s).padStart(2, "0")}`;
   }
 

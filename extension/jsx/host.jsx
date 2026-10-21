@@ -122,6 +122,10 @@ var AutomacaoEdicao = (function () {
     return null;
   }
 
+  function itemIdOf(clip) {
+    try { return clip.projectItem ? String(clip.projectItem.nodeId) : ""; } catch (e) { return ""; }
+  }
+
   function mediaPathOf(clip) {
     try {
       if (clip.projectItem && clip.projectItem.getMediaPath) return String(clip.projectItem.getMediaPath());
@@ -785,7 +789,7 @@ var AutomacaoEdicao = (function () {
       for (var c = 0; c < tr.clips.numItems; c++) {
         var a = tr.clips[c];
         audioPos[a.nodeId] = [t, c];
-        list.push({ id: a.nodeId, name: a.name, start: ticksOf(a.start), end: ticksOf(a.end), inPoint: ticksOf(a.inPoint), path: mediaPathOf(a), disabled: a.disabled ? true : false });
+        list.push({ id: a.nodeId, name: a.name, start: ticksOf(a.start), end: ticksOf(a.end), inPoint: ticksOf(a.inPoint), path: mediaPathOf(a), item: itemIdOf(a), disabled: a.disabled ? true : false });
       }
       audio.push({ index: t, name: tr.name || "A" + (t + 1), locked: tr.isLocked() ? true : false, clips: list });
     }
@@ -807,7 +811,7 @@ var AutomacaoEdicao = (function () {
         try { speed = clip.getSpeed(); } catch (eS) {}
         var rev = false;
         try { rev = clip.isSpeedReversed() ? true : false; } catch (eR) {}
-        vl.push({ id: clip.nodeId, name: clip.name, start: ticksOf(clip.start), end: ticksOf(clip.end), inPoint: ticksOf(clip.inPoint), path: mediaPathOf(clip), kind: clipKind(clip), linked: linked, speed: speed, reversed: rev });
+        vl.push({ id: clip.nodeId, name: clip.name, start: ticksOf(clip.start), end: ticksOf(clip.end), inPoint: ticksOf(clip.inPoint), path: mediaPathOf(clip), item: itemIdOf(clip), kind: clipKind(clip), linked: linked, speed: speed, reversed: rev });
       }
       video.push({ index: v, name: vt.name || "V" + (v + 1), locked: vt.isLocked() ? true : false, clips: vl });
     }
@@ -884,17 +888,17 @@ var AutomacaoEdicao = (function () {
   /**
    * Importa o XML reescrito e devolve a sequência nova, na pasta args.bin.
    *
-   * ⚠️ Na importação o Premiere reaproveita alguns itens do projeto (as câmeras)
-   * mas cria itens REPETIDOS de outros (os WAV dos gravadores, 26.5.1) — sem
+   * ⚠️ Na importação o Premiere reaproveita alguns itens do projeto mas cria
+   * itens REPETIDOS de outros (WAV dos gravadores, vídeos — 26.5) — sem
    * diferença visível entre original e cópia além do contador de uso. Por isso a
-   * importação vai para uma pasta temporária; cada clipe da sequência nova que
-   * usa um item repetido é trocado pelo item original no mesmo lugar e trecho
-   * (overwriteClip), e a pasta temporária — só com repetidos sem uso — é apagada.
-   * Vídeo é trocado com o áudio direcionado (replaceVideoClip — nunca na faixa
-   * do gravador); áudio vinculado vai junto com o vídeo dele. Clipe com efeito
-   * extra (ou caso que não dá para direcionar) não é trocado: o repetido fica na
-   * pasta final e entra em `kept`.
-   * args: { path, name, bin, srcSeqId }
+   * importação vai para uma pasta temporária e cada clipe da sequência nova que
+   * usa um item repetido é trocado pelo original no mesmo lugar e trecho — em
+   * LOTES (syncReplaceDuplicates), porque numa sequência grande são centenas de
+   * trocas e uma chamada única prendia o motor de scripts por dezenas de minutos
+   * sem progresso (786 clipes, 21/10). Esta chamada só importa e monta a lista.
+   * args: { path, name, bin, srcSeqId, expected }
+   *   expected: { video: [[[início, itemId], …] por faixa], audio: […] } — onde cada clipe fica
+   *   na cópia e o item que ele usa na origem (ver startReplaceJob)
    */
   api.syncImportXml = function (args) {
     var rootItem = app.project.rootItem;
@@ -908,6 +912,7 @@ var AutomacaoEdicao = (function () {
     var before = {};
     for (var b = 0; b < app.project.sequences.numSequences; b++) before[app.project.sequences[b].sequenceID] = true;
     var p = String(args.path).replace(/\//g, "\\");
+    var t0 = new Date().getTime();
     if (!app.project.importFiles([p], true, tmp, false)) {
       try { tmp.deleteBin(); } catch (eD) {}
       throw new Error("O Premiere não importou o XML.");
@@ -921,16 +926,65 @@ var AutomacaoEdicao = (function () {
     if (copy.name !== args.name) copy.name = args.name;
     copy.projectItem.moveBin(bin);
     var src = args.srcSeqId ? seqById(args.srcSeqId) : null;
-    var r = src ? replaceImportedDuplicates(copy, tmp, src) : { replaced: 0, kept: 0, unused: 0, inUse: {} };
-    if (!src) for (var q = 0; q < tmp.children.numItems; q++) r.inUse[tmp.children[q].nodeId] = true;
-    // o que sobrou em uso vai para a pasta final; o resto (repetidos sem uso) some com a temporária
-    for (var k = tmp.children.numItems - 1; k >= 0; k--) {
-      var it = tmp.children[k];
-      if (r.inUse[it.nodeId]) it.moveBin(bin);
-    }
-    if (tmp.children.numItems === r.unused) tmp.deleteBin();
-    return { id: copy.sequenceID, name: copy.name, replaced: r.replaced, kept: r.kept, removed: r.unused };
+    var importMs = new Date().getTime() - t0;
+    replaceJob = startReplaceJob(copy, tmp, bin, src, args.expected);
+    return { id: copy.sequenceID, name: copy.name, pending: replaceJob.work.length, importMs: importMs, listMs: new Date().getTime() - t0 - importMs };
   };
+
+  /**
+   * Faz um lote das trocas preparadas pelo syncImportXml (até args.budgetMs) e
+   * devolve o progresso; o último lote apaga as faixas de áudio que as trocas
+   * criaram e a pasta temporária (só repetidos sem uso).
+   * args: { seqId, budgetMs }
+   */
+  api.syncReplaceDuplicates = function (args) {
+    var job = replaceJob;
+    if (!job || job.seqId !== args.seqId) throw new Error("A troca dos itens repetidos não está em andamento — crie a cópia de novo.");
+    var seq = seqById(job.seqId);
+    if (!seq) { replaceJob = null; throw new Error("A sequência sincronizada sumiu do projeto."); }
+    var budget = Number(args.budgetMs) || 2000;
+    var t0 = new Date().getTime();
+    var A = seq.audioTracks;
+    try {
+      while (job.next < job.work.length && new Date().getTime() - t0 < budget) {
+        var w = job.work[job.next++];
+        var r = "kept";
+        try { r = replaceWorkItem(seq, job, w); } catch (eW) { r = "kept"; }
+        if (r === "replaced") job.replaced++;
+        else if (r === "kept") { job.kept++; job.inUse[w.dupId] = true; }
+      }
+    } finally {
+      // travas como o usuário deixou (as faixas novas ficam destravadas)
+      for (var a = 0; a < job.locks.length && a < A.numTracks; a++) A[a].setLocked(job.locks[a] ? 1 : 0);
+      job.lockedFor = null;
+    }
+    var out = { id: seq.sequenceID, name: seq.name, done: false, processed: job.next, total: job.work.length, replaced: job.replaced, kept: job.kept };
+    if (job.next < job.work.length) return out;
+    replaceJob = null;
+    removeNewEmptyAudioTracks(seq, job.nA0);
+    // o que está em uso (inclusive em subpastas da importação) vai para a pasta final; o resto são
+    // repetidos sem uso e somem com a temporária, que é sempre apagada (21/10: ela ficou
+    // vazia no projeto: só era apagada se tivesse apenas itens soltos)
+    var unused = moveInUseOut(job.tmp, job);
+    try { job.tmp.deleteBin(); } catch (eDel) {}
+    out.done = true;
+    out.removed = unused;
+    return out;
+  };
+
+  var replaceJob = null;
+
+  /** Move para job.bin os itens em uso da pasta (e subpastas); devolve quantos repetidos sem uso ficaram nela. */
+  function moveInUseOut(folder, job) {
+    var unused = 0;
+    for (var k = folder.children.numItems - 1; k >= 0; k--) {
+      var it = folder.children[k];
+      if (it.type === ProjectItemType.BIN) unused += moveInUseOut(it, job);
+      else if (job.inUse[it.nodeId]) it.moveBin(job.bin);
+      else unused++;
+    }
+    return unused;
+  }
 
   function normMediaPath(p) {
     return String(p || "").replace(/\//g, "\\").replace(/\\+/g, "\\").toLowerCase();
@@ -953,24 +1007,40 @@ var AutomacaoEdicao = (function () {
   }
 
   /**
-   * "Original" de um arquivo = o item que a sequência de ORIGEM usa para ele.
-   * Clipe da sequência nova com outro item para o mesmo arquivo (criado agora
-   * na pasta temporária ou repetido de uma criação anterior) é trocado.
+   * Monta a lista de trocas numa passada só. "Original" de um arquivo = o item
+   * que a sequência de ORIGEM usa para ele; clipe da sequência nova com outro
+   * item para o mesmo arquivo (criado agora na pasta temporária ou repetido de
+   * uma criação anterior) entra na lista. Com `expected` (o painel diz onde cada
+   * clipe fica e qual item ele usa na origem), o par é pelo ITEM da origem, não pelo
+   * caminho: em 21/10 câmeras com arquivos de mesmo nome em pastas diferentes
+   * (C1/C0168.mp4 e C2/C0168.mp4) fizeram a importação ligar 68 clipes ao arquivo da OUTRA câmera —
+   * um item original válido, que o par por caminho não via como errado. E um arquivo
+   * com dois itens no projeto (overlays em 3 pastas) continua com o item da origem.
+   * Guarda só faixa + início (ticks): o
+   * clipe é buscado de novo na hora da troca (referências antigas ficam lentas
+   * e os vizinhos mudam a cada overwrite). Vídeos antes dos áudios: o áudio
+   * vinculado é trocado junto com o vídeo dele.
    */
-  function replaceImportedDuplicates(seq, tmp, src) {
-    var out = { replaced: 0, kept: 0, unused: 0, inUse: {} };
-    var originals = {}; // caminho -> item usado na origem
+  function startReplaceJob(seq, tmp, bin, src, expected) {
+    var job = { seqId: seq.sequenceID, tmp: tmp, bin: bin, work: [], next: 0, replaced: 0, kept: 0, inUse: {}, originals: {}, itemById: {}, expected: expected || null, audioTrackOf: {}, frame: Number(seq.timebase), nA0: seq.audioTracks.numTracks, locks: [], lockedFor: null };
+    for (var a = 0; a < seq.audioTracks.numTracks; a++) job.locks.push(seq.audioTracks[a].isLocked() ? true : false);
+    if (!src) {
+      for (var q = 0; q < tmp.children.numItems; q++) job.inUse[tmp.children[q].nodeId] = true;
+      return job;
+    }
     var srcTracks = [src.videoTracks, src.audioTracks];
     for (var sk = 0; sk < 2; sk++) {
       for (var st = 0; st < srcTracks[sk].numTracks; st++) {
         var sTrack = srcTracks[sk][st];
-        for (var sc = 0; sc < sTrack.clips.numItems; sc++) {
+        var sClips = sTrack.clips, sn = sClips.numItems;
+        for (var sc = 0; sc < sn; sc++) {
           var spi = null;
-          try { spi = sTrack.clips[sc].projectItem; } catch (eS) {}
+          try { spi = sClips[sc].projectItem; } catch (eS) {}
           if (!spi) continue;
+          job.itemById[spi.nodeId] = spi;
           var sp = "";
           try { sp = normMediaPath(spi.getMediaPath()); } catch (eM) {}
-          if (sp && !originals[sp]) originals[sp] = spi;
+          if (sp && !job.originals[sp]) job.originals[sp] = spi;
         }
       }
     }
@@ -978,45 +1048,117 @@ var AutomacaoEdicao = (function () {
     var TRACKS = [seq.videoTracks, seq.audioTracks];
     for (var kind = 0; kind < 2; kind++) {
       for (var t = 0; t < TRACKS[kind].numTracks; t++) {
-        var track = TRACKS[kind][t];
-        for (var n = track.clips.numItems - 1; n >= 0; n--) {
-          var clip = track.clips[n];
+        var clips = TRACKS[kind][t].clips, n = clips.numItems;
+        for (var c = 0; c < n; c++) {
+          var clip = clips[c];
+          if (kind === 1) job.audioTrackOf[clip.nodeId] = t;
           var pi = null;
           try { pi = clip.projectItem; } catch (eP) {}
           if (!pi) continue;
-          if (pathOf[pi.nodeId] === undefined) {
-            try { pathOf[pi.nodeId] = normMediaPath(pi.getMediaPath()); } catch (eM2) { pathOf[pi.nodeId] = ""; }
+          var id = pi.nodeId;
+          if (pathOf[id] === undefined) {
+            try { pathOf[id] = normMediaPath(pi.getMediaPath()); } catch (eM2) { pathOf[id] = ""; }
           }
-          var original = originals[pathOf[pi.nodeId]];
-          if (!original || original.nodeId === pi.nodeId) continue; // já é o original (ou arquivo sem par na origem)
-          var linked = 0;
-          try { var L = clip.getLinkedItems(); linked = L ? L.numItems : 0; } catch (eL) {}
-          var ok = false;
-          if (!hasExtraEffects(clip) && !clip.disabled) {
-            // vídeo: troca com o áudio direcionado (nunca na faixa do gravador); áudio vinculado
-            // já foi trocado junto com o vídeo dele
-            if (kind === 0) ok = replaceVideoClip(seq, t, clip, original, Number(seq.timebase));
-            else if (linked === 0) ok = replaceClipItem(track, clip, original, Number(seq.timebase));
-          }
-          if (!ok) {
-            out.kept++;
-            out.inUse[pi.nodeId] = true;
-          } else out.replaced++;
+          // item esperado (o da origem) pela posição na cópia; sem a lista, pelo caminho
+          var original = null, exp = job.expected ? expectedItemId(job.expected[kind ? "audio" : "video"][t], ticksOf(clip.start), job.frame) : null;
+          if (exp && job.itemById[exp]) original = job.itemById[exp];
+          else if (!job.expected) original = job.originals[pathOf[id]];
+          // já é o original, ou não tem par na origem (sequência aninhada, gráfico…): fica como veio e,
+          // se estiver na pasta temporária, vai para a pasta final em vez de ser apagado com ela
+          if (!original || original.nodeId === id) { job.inUse[id] = true; continue; }
+          if (hasExtraEffects(clip) || clip.disabled) { job.kept++; job.inUse[id] = true; continue; }
+          job.work.push({ kind: kind, t: t, start: ticksOf(clip.start), dupId: id, origId: original.nodeId });
         }
       }
     }
-    for (var i = 0; i < tmp.children.numItems; i++) {
-      var it = tmp.children[i];
-      if (it.type !== ProjectItemType.BIN && !out.inUse[it.nodeId]) out.unused++;
-    }
-    return out;
+    return job;
   }
 
-  function trackIndexOf(tracks, item) {
-    for (var t = 0; t < tracks.numTracks; t++) {
-      for (var c = 0; c < tracks[t].clips.numItems; c++) if (tracks[t].clips[c].nodeId === item.nodeId) return t;
+  var TICK_TOL = 254016000000 / 1000; // 1 ms
+
+  /**
+   * Item esperado para o clipe que começa em `ticks` numa faixa da cópia. A lista
+   * vem do painel com o destino exato; o XML arredonda o início para quadros da
+   * sequência → aceita o mais próximo a até meio quadro.
+   */
+  function expectedItemId(list, ticks, frame) {
+    if (!list || !list.length) return null;
+    var lo = 0, hi = list.length - 1;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (list[mid][0] < ticks) lo = mid + 1;
+      else hi = mid;
     }
-    return -1;
+    var best = null, bd = Infinity;
+    for (var i = Math.max(0, lo - 1); i <= Math.min(list.length - 1, lo + 1); i++) {
+      var d = Math.abs(list[i][0] - ticks);
+      if (d < bd) { bd = d; best = list[i]; }
+    }
+    return best && bd <= frame / 2 + TICK_TOL ? String(best[1]) : null;
+  }
+
+  /** Índice do 1º clipe da faixa com início ≥ ticks − 1 ms (clipes em ordem de início). */
+  function lowerClipIndex(clips, ticks) {
+    var lo = 0, hi = clips.numItems;
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (ticksOf(clips[mid].start) < ticks - TICK_TOL) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  }
+
+  /** Clipe da faixa que começa em `ticks` (± 1 ms), ou null. */
+  function clipStartingAt(track, ticks) {
+    var clips = track.clips;
+    var i = lowerClipIndex(clips, ticks);
+    if (i < clips.numItems && Math.abs(ticksOf(clips[i].start) - ticks) <= TICK_TOL) return clips[i];
+    return null;
+  }
+
+  /** Remove os clipes do item `nodeId` contidos em [start, end] (sobras do repetido). */
+  function removeItemClipsIn(track, nodeId, start, end) {
+    var clips = track.clips;
+    var i = lowerClipIndex(clips, start), hits = [];
+    for (; i < clips.numItems; i++) {
+      var r = clips[i];
+      if (ticksOf(r.start) > end + TICK_TOL) break;
+      if (ticksOf(r.end) <= end + TICK_TOL && r.projectItem && r.projectItem.nodeId === nodeId) hits.push(r);
+    }
+    for (var h = hits.length - 1; h >= 0; h--) hits[h].remove(false, false);
+  }
+
+  /**
+   * Faz uma troca da lista: "replaced", "kept" (o repetido fica em uso) ou
+   * "skip" (o clipe já não usa o repetido — ex.: áudio trocado junto com o vídeo).
+   */
+  function replaceWorkItem(seq, job, w) {
+    var track = w.kind === 0 ? seq.videoTracks[w.t] : seq.audioTracks[w.t];
+    var clip = track ? clipStartingAt(track, w.start) : null;
+    if (!clip || !clip.projectItem || clip.projectItem.nodeId !== w.dupId) return "skip";
+    var original = job.itemById[w.origId] || job.originals[normMediaPath(clip.projectItem.getMediaPath())];
+    if (w.kind === 0) return replaceVideoClip(seq, job, w.t, clip, original) ? "replaced" : "kept";
+    // áudio: só o que não tem vínculo (o vinculado vai com o vídeo dele)
+    var linked = 0;
+    try { var L = clip.getLinkedItems(); linked = L ? L.numItems : 0; } catch (eL) {}
+    if (linked) return "kept";
+    setAudioLocks(seq, job, "all-open");
+    return replaceClipItem(track, clip, original, job.frame) ? "replaced" : "kept";
+  }
+
+  /**
+   * Travas das faixas de áudio para o overwrite: "all-open" = como o usuário
+   * deixou; número = só essa faixa destravada; -1 = todas travadas. Só mexe
+   * quando muda (a lista vem em ordem de faixa).
+   */
+  function setAudioLocks(seq, job, mode) {
+    if (job.lockedFor === mode) return;
+    var A = seq.audioTracks;
+    for (var a = 0; a < job.nA0; a++) {
+      var lock = mode === "all-open" ? job.locks[a] : a !== mode;
+      A[a].setLocked(lock ? 1 : 0);
+    }
+    job.lockedFor = mode;
   }
 
   /**
@@ -1026,62 +1168,56 @@ var AutomacaoEdicao = (function () {
    *  - com áudio vinculado (a câmera tem o som dela na sequência): todas as faixas
    *    de áudio travadas menos a desse áudio → original entra com vídeo e áudio
    *    exatamente onde estavam os repetidos; o gravador fica travado;
-   *  - sem áudio vinculado: tudo travado → o áudio cai numa faixa nova, que é
-   *    apagada (a sequência fica como a original).
+   *  - sem áudio vinculado: tudo travado → o áudio cai numa faixa nova e sai
+   *    (as faixas novas vazias são apagadas no fim da lista).
    * Fica o repetido (false) se: áudio vinculado em mais de uma faixa, com trecho
    * diferente do vídeo (J/L-cut) ou numa faixa ABAIXO da do vídeo (não dá para
    * direcionar para baixo).
    */
-  function replaceVideoClip(seq, v, clip, original, frame) {
-    var tb = 254016000000 / 1000;
+  function replaceVideoClip(seq, job, v, clip, original) {
+    var tb = TICK_TOL;
     var start = ticksOf(clip.start), end = ticksOf(clip.end), inP = ticksOf(clip.inPoint);
     var dupId = clip.projectItem.nodeId;
-    var A = seq.audioTracks, dest = -1, la = null, n = 0;
+    var A = seq.audioTracks, dest = -1, la = null, n = 0, laOut = 0;
     var L = null;
     try { L = clip.getLinkedItems(); } catch (eL) {}
     if (L) for (var i = 0; i < L.numItems; i++) if (L[i].mediaType === "Audio") { la = L[i]; n++; }
     if (n > 1) return false;
     if (la) {
       if (Math.abs(ticksOf(la.start) - start) > tb || Math.abs(ticksOf(la.end) - end) > tb || Math.abs(ticksOf(la.inPoint) - inP) > tb) return false;
-      dest = trackIndexOf(A, la);
-      if (dest < v) return false;
+      laOut = ticksOf(la.outPoint);
+      dest = job.audioTrackOf[la.nodeId];
+      if (dest === undefined) dest = trackIndexOf(A, la);
+      if (dest < v || dest >= job.nA0) return false;
     }
-    var nA0 = A.numTracks, locks = [];
-    for (var a = 0; a < nA0; a++) { locks.push(A[a].isLocked()); A[a].setLocked(a === dest ? 0 : 1); }
-    var ok = false;
-    try {
-      ok = replaceClipItem(seq.videoTracks[v], clip, original, frame);
-    } finally {
-      for (var b = 0; b < nA0; b++) A[b].setLocked(locks[b] ? 1 : 0);
-    }
+    setAudioLocks(seq, job, dest);
+    var ok = replaceClipItem(seq.videoTracks[v], clip, original, job.frame);
     if (dest >= 0) {
       // sobra do áudio repetido e acerto fino do áudio novo (igual ao vídeo)
-      var tr = A[dest], got = false;
-      for (var s = tr.clips.numItems - 1; s >= 0; s--) {
-        var r = tr.clips[s];
-        if (r.projectItem && r.projectItem.nodeId === dupId && ticksOf(r.start) >= start - tb && ticksOf(r.end) <= end + tb) r.remove(false, false);
-      }
-      for (var k = 0; k < tr.clips.numItems; k++) {
-        var c = tr.clips[k];
-        if (Math.abs(ticksOf(c.start) - start) > tb || !c.projectItem || c.projectItem.nodeId !== original.nodeId) continue;
+      var tr = A[dest];
+      removeItemClipsIn(tr, dupId, start - tb, end);
+      var c = clipStartingAt(tr, start);
+      var got = false;
+      if (c && c.projectItem && c.projectItem.nodeId === original.nodeId) {
         if (ticksOf(c.start) !== start) c.start = timeFromTicks(start);
         if (ticksOf(c.inPoint) !== inP) c.inPoint = timeFromTicks(inP);
         if (ticksOf(c.end) !== end) c.end = timeFromTicks(end);
-        got = true;
-        break;
+        if (ticksOf(c.outPoint) !== laOut) c.outPoint = timeFromTicks(laOut);
+        got = ticksOf(c.start) === start && ticksOf(c.end) === end && Math.abs(ticksOf(c.inPoint) - inP) <= tb && Math.abs(ticksOf(c.outPoint) - laOut) <= tb;
       }
       ok = ok && got;
     } else {
-      // sem áudio na origem: o que o overwrite criou numa faixa nova sai, e a faixa também
-      for (var t2 = nA0; t2 < A.numTracks; t2++) {
-        for (var s2 = A[t2].clips.numItems - 1; s2 >= 0; s2--) {
-          var r2 = A[t2].clips[s2];
-          if (r2.projectItem && r2.projectItem.nodeId === original.nodeId) r2.remove(false, false);
-        }
-      }
-      removeNewEmptyAudioTracks(seq, nA0);
+      // sem áudio na origem: o que o overwrite pôs numa faixa nova sai
+      for (var t2 = job.nA0; t2 < A.numTracks; t2++) removeItemClipsIn(A[t2], original.nodeId, start - tb, end + tb);
     }
     return ok;
+  }
+
+  function trackIndexOf(tracks, item) {
+    for (var t = 0; t < tracks.numTracks; t++) {
+      for (var c = 0; c < tracks[t].clips.numItems; c++) if (tracks[t].clips[c].nodeId === item.nodeId) return t;
+    }
+    return -1;
   }
 
   /** Apaga as faixas de áudio vazias de índice ≥ from (criadas pelo overwrite). Precisa da sequência ativa (QE). */
@@ -1102,7 +1238,7 @@ var AutomacaoEdicao = (function () {
    * overwrite entraria com o arquivo inteiro por cima dos vizinhos.
    */
   function replaceClipItem(track, clip, original, frame) {
-    var tb = 254016000000 / 1000; // tolerância: 1 ms
+    var tb = TICK_TOL;
     var start = ticksOf(clip.start), end = ticksOf(clip.end), inP = ticksOf(clip.inPoint), outP = ticksOf(clip.outPoint);
     var oldIn = original.getInPoint(), oldOut = original.getOutPoint();
     var tIn = new Time(); tIn.ticks = String(inP);
@@ -1111,36 +1247,38 @@ var AutomacaoEdicao = (function () {
     var ok = false;
     try {
       // ⚠️ setIn/OutPoint arredondam para a grade do PRÓPRIO arquivo (WAV com
-      // timecode 25 fps → 40 ms) e o fim é limitado ao tamanho do arquivo (o XML
-      // arredonda a duração para quadros inteiros da sequência). Regra: início
-      // exato; fim do item pode ficar ATÉ 0,1 s antes (a sobra do repetido sai e o
-      // clipe é esticado até o fim certo), nunca depois — senão o overwrite
-      // invadiria o vizinho.
+      // timecode 25 fps → 40 ms: in 3,70370 vira 3,68) e o fim é limitado ao
+      // tamanho do arquivo (o XML arredonda a duração para quadros inteiros da
+      // sequência). Regra: entrada do item no ponto da grade ATÉ 0,1 s antes da do
+      // clipe e saída com a mesma duração — o trecho do item nunca passa do
+      // tamanho do clipe, então o overwrite não invade o vizinho; depois a entrada
+      // e o fim do clipe são acertados ao tick. (Antes a entrada tinha de pegar
+      // exata e esses WAV ficavam com o item repetido — 7 num teste de 21/10.)
       // ⚠️ passar Time (ticks), não segundos: 2,0354 s (quadro 61 exato) em segundos
       // virava o quadro 60 e a troca era recusada (medido 13/10, 2.6.2)
       var slack = 254016000000 / 10;
       original.setInPoint(tIn, 4);
-      original.setOutPoint(tOut, 4);
-      if (ticksOf(original.getOutPoint()) > outP + tb) original.setOutPoint(timeFromTicks(outP - slack / 2), 4);
+      if (ticksOf(original.getInPoint()) > inP + tb) original.setInPoint(timeFromTicks(inP - slack / 2), 4);
+      var gotIn = ticksOf(original.getInPoint());
+      if (gotIn > inP + tb || inP - gotIn > slack) return false;
+      var wantOut = outP - Math.max(0, inP - gotIn); // mesma duração a partir da entrada que pegou
+      original.setOutPoint(timeFromTicks(wantOut), 4);
+      if (ticksOf(original.getOutPoint()) > wantOut + tb) original.setOutPoint(timeFromTicks(wantOut - slack / 2), 4);
       var gotOut = ticksOf(original.getOutPoint());
-      if (Math.abs(ticksOf(original.getInPoint()) - inP) > tb || gotOut > outP + tb || outP - gotOut > slack + frame) return false;
+      if (gotOut > wantOut + tb || wantOut - gotOut > slack + frame) return false;
       var dupId = clip.projectItem.nodeId;
       track.overwriteClip(original, at);
       // sobra do repetido entre o fim do item e o fim do clipe: sai antes de esticar
-      for (var s = track.clips.numItems - 1; s >= 0; s--) {
-        var r = track.clips[s];
-        if (r.projectItem && r.projectItem.nodeId === dupId && ticksOf(r.start) >= start - tb && ticksOf(r.end) <= end + tb) r.remove(false, false);
-      }
-      for (var i = 0; i < track.clips.numItems; i++) {
-        var c = track.clips[i];
-        if (Math.abs(ticksOf(c.start) - start) > tb) continue;
-        if (!c.projectItem || c.projectItem.nodeId !== original.nodeId) break;
+      removeItemClipsIn(track, dupId, start - tb, end);
+      var c = clipStartingAt(track, start);
+      if (c && c.projectItem && c.projectItem.nodeId === original.nodeId) {
         // acerto fino ao tick (o in/out do item vai em segundos)
         if (ticksOf(c.start) !== start) { c.start = at; }
         if (ticksOf(c.inPoint) !== inP) { c.inPoint = tIn; }
         if (ticksOf(c.end) !== end) { var e = new Time(); e.ticks = String(end); c.end = e; }
-        ok = ticksOf(c.start) === start && ticksOf(c.end) === end && Math.abs(ticksOf(c.inPoint) - inP) <= tb;
-        break;
+        // ⚠️ esticar o fim não atualiza a saída informada (ficava 1–2 q menor nos WAV, 21/10)
+        if (ticksOf(c.outPoint) !== outP) c.outPoint = tOut;
+        ok = ticksOf(c.start) === start && ticksOf(c.end) === end && Math.abs(ticksOf(c.inPoint) - inP) <= tb && Math.abs(ticksOf(c.outPoint) - outP) <= tb;
       }
     } finally {
       try { original.setInPoint(oldIn, 4); original.setOutPoint(oldOut, 4); } catch (eR) {}

@@ -594,6 +594,49 @@ for (const f of (process.env.AE_REAL_MEDIA || "").split(";").filter(Boolean)) {
   });
 }
 
+test("sincronizar: conferência da cópia pega clipe ligado ao arquivo de mesmo nome de outra câmera", () => {
+  const Setup = require(path.join(base, "sync", "syncSetup.js"));
+  const tb = 4237833600; // 59,94
+  const si = {
+    timebase: tb,
+    video: [{ clips: [{ start: 0, end: 10 * tb, item: "c1-0168", name: "C0168.MP4" }, { start: 20 * tb, end: 30 * tb, item: "c1-0169", name: "C0169.MP4" }] },
+            { clips: [{ start: 0, end: 10 * tb, item: "c2-0168", name: "C0168.MP4" }] }],
+    audio: [{ clips: [{ start: 5 * tb, end: 50 * tb, item: "wav", name: "ZOOM.WAV" }] }],
+  };
+  // V2 vai 100 quadros para a direita; V1 fica
+  const moves = [{ v: 1, t: 1, i: 0, to: 100 * tb }];
+  const exp = Setup.buildExpected(si, moves);
+  assert.deepStrictEqual(exp.video[1], [[100 * tb, "c2-0168"]]);
+  assert.deepStrictEqual(exp.video[0].map((e) => e[1]), ["c1-0168", "c1-0169"]);
+  const copy = (v2item, shift) => ({
+    timebase: tb,
+    video: [{ clips: si.video[0].clips }, { clips: [{ start: 100 * tb + shift, end: 110 * tb, item: v2item, name: "C0168.MP4" }] }],
+    audio: si.audio,
+  });
+  const ok = Setup.checkExpected(exp, copy("c2-0168", Math.round(tb * 0.4))); // XML arredonda até meio quadro
+  assert.strictEqual(ok.wrong.length, 0);
+  assert.strictEqual(ok.missing, 0);
+  assert.strictEqual(ok.checked, 4);
+  const bad = Setup.checkExpected(exp, copy("c1-0168", 0)); // importação ligou à câmera 1
+  assert.strictEqual(bad.wrong.length, 1);
+  assert.strictEqual(bad.wrong[0].track, "V2");
+  const far = Setup.checkExpected(exp, copy("c2-0168", 3 * tb));
+  assert.strictEqual(far.missing, 1);
+});
+
+test("formatDuration: arredonda o total antes de separar minutos e segundos", () => {
+  const sandbox = { window: {} };
+  sandbox.root = sandbox.window;
+  const code = fs.readFileSync(path.join(base, "core", "ui.js"), "utf8");
+  new (require("vm").Script)(code).runInNewContext(Object.assign(sandbox, { document: {}, console }));
+  const UI = sandbox.window.AEUI || sandbox.AEUI;
+  assert.strictEqual(UI.formatDuration(119.6), "2:00");
+  assert.strictEqual(UI.formatDuration(59.996), "1:00");
+  assert.strictEqual(UI.formatDuration(125.2), "2:05");
+  assert.strictEqual(UI.formatDuration(4.36), "4,36s");
+  assert.strictEqual(UI.formatDuration(0.5), "500ms");
+});
+
 // ---------------------------------------------------------------- runner
 (async () => {
   for (const t of tests) {

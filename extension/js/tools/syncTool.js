@@ -862,7 +862,7 @@
      * posições (AESyncXml) e importa como sequência nova. Erro antes da
      * importação = nada foi criado; quem chama cai em createByMoves.
      */
-    async function createByXml(name, moves) {
+    async function createByXml(name, moves, expected) {
       const os = require("os");
       const stamp = Date.now();
       const src = pathMod.join(os.tmpdir(), `rhythm-sync-${stamp}-orig.xml`);
@@ -870,7 +870,10 @@
       try {
         setStatus(els.status, "Exportando a sequência…");
         progress(0.1);
+        const s = (ms) => (ms / 1000).toFixed(1);
+        let t = Date.now();
         await AEHost.call("syncExportXml", { seqId: state.info.seqId, path: src });
+        const exportMs = Date.now() - t;
         setStatus(els.status, "Montando a sequência sincronizada…");
         progress(0.4);
         const r = AESyncXml.rewrite(fs.readFileSync(src, "utf8"), state.info, moves, { name });
@@ -878,9 +881,26 @@
         setStatus(els.status, "Importando no projeto…");
         progress(0.6);
         try {
-          const copy = await AEHost.call("syncImportXml", { path: out, name, bin: "Rhythm · Sincronizar", srcSeqId: state.info.seqId });
-          progress(1);
-          return copy;
+          t = Date.now();
+          const imp = await AEHost.call("syncImportXml", { path: out, name, bin: "Rhythm · Sincronizar", srcSeqId: state.info.seqId, expected });
+          const callMs = Date.now() - t;
+          // troca dos itens repetidos da importação em lotes curtos (o motor de
+          // scripts fica livre entre eles e o progresso aparece)
+          const t0 = Date.now();
+          let batches = 0;
+          for (;;) {
+            const r = await AEHost.call("syncReplaceDuplicates", { seqId: imp.id, budgetMs: 2000 });
+            batches++;
+            const f = r.total ? r.processed / r.total : 1;
+            progress(0.7 + 0.3 * f);
+            if (r.done) {
+              // tempo por etapa no log (21/10: uma criação levou 9:30 sem dizer onde)
+              r.timing = `exportação ${s(exportMs)} s · importação ${s(imp.importMs != null ? imp.importMs : callMs)} s · lista ${s(imp.listMs || 0)} s · troca ${s(Date.now() - t0)} s em ${batches} lote(s)`;
+              return r;
+            }
+            const el = (Date.now() - t0) / 1000;
+            setStatus(els.status, `Trocando itens repetidos da importação ${r.processed}/${r.total}${f > 0.05 ? ` · falta ~${formatDuration(Math.max(1, (el / f) * (1 - f)))}` : ""}`);
+          }
         } catch (err) {
           err.imported = true; // o Premiere pode ter importado algo: não tentar de novo pelo outro caminho
           throw err;
@@ -935,19 +955,34 @@
         const failed = [];
         const tc = Date.now();
         let how = "XML";
-        let copy = await createByXml(name, moves).catch((err) => {
+        // onde cada clipe fica e qual item usa na origem: a troca acerta o que a importação ligou
+        // errado (arquivos de mesmo nome em câmeras diferentes, 21/10) e a conferência usa
+        const expected = AESyncSetup.buildExpected(state.info, moves);
+        let copy = await createByXml(name, moves, expected).catch((err) => {
           if (err.imported) throw err;
           console.warn("Rhythm: criação por XML falhou, usando os movimentos —", err);
           how = `movimentos (XML falhou: ${err.message})`;
           return null;
         });
         if (!copy) copy = await createByMoves(name, moves, failed);
-        const dupInfo = copy.replaced != null ? ` · itens repetidos da importação: ${copy.replaced} trocado(s) pelo original, ${copy.kept} mantido(s)` : "";
-        writeLog(`criação ${formatDuration((Date.now() - tc) / 1000)} por ${how} · ${moves.length} movimentos · ${failed.length} falha(s)${dupInfo}`);
-        await AEHost.call("syncOpen", { seqId: copy.id });
+        // conferência: cada clipe da cópia com o mesmo item que usa na origem
+        let check = null;
+        try {
+          await AEHost.call("syncOpen", { seqId: copy.id });
+          check = AESyncSetup.checkExpected(expected, await AEHost.call("syncInfo", { seqId: copy.id }));
+        } catch (eC) {
+          console.warn("Rhythm: conferência da cópia falhou —", eC);
+        }
+        const checkInfo = check ? ` · conferência: ${check.checked} clipe(s), ${check.wrong.length} com outro item, ${check.missing} sem par` : " · conferência não rodou";
+        const dupInfo = (copy.replaced != null ? ` · itens repetidos da importação: ${copy.replaced} trocado(s) pelo original, ${copy.kept} mantido(s)` : "") + (copy.timing ? ` · ${copy.timing}` : "");
+        writeLog(`criação ${formatDuration((Date.now() - tc) / 1000)} por ${how} · ${moves.length} movimentos · ${failed.length} falha(s)${dupInfo}${checkInfo}`);
         state.created = copy;
         renderList();
-        if (failed.length) {
+        if (check && (check.wrong.length || check.missing)) {
+          els.notice.hidden = false;
+          els.notice.innerHTML = `<b>Confira a cópia: ${check.wrong.length} clipe(s) com um arquivo diferente do da original${check.missing ? ` e ${check.missing} sem par` : ""}</b><ul>${check.wrong.slice(0, 12).map((w) => `<li>${w.track} · ${escapeHtml(w.name)}</li>`).join("")}</ul>`;
+          setStatus(els.status, `"${copy.name}" criada, mas a conferência achou diferenças.`, "error");
+        } else if (failed.length) {
           els.notice.hidden = false;
           els.notice.innerHTML = `<b>${failed.length} clipe(s) não puderam ser movidos</b> — confira na cópia:<ul>${failed.slice(0, 12).map((f) => `<li>${f.v ? "V" : "A"}${f.t + 1} · clipe ${f.i + 1}: ${escapeHtml(f.error)}</li>`).join("")}</ul>`;
           setStatus(els.status, `"${copy.name}" criada, com ${failed.length} falha(s).`, "error");

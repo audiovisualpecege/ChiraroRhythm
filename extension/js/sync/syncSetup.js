@@ -194,5 +194,44 @@
     return out;
   }
 
-  return { buildDevices, buildItems, buildMoves, usable };
+  /**
+   * Onde cada clipe fica na cópia e qual item do projeto ele usa na origem:
+   * { video: [[[início, itemId], …] por faixa, em ordem de início], audio: […] }.
+   * Vai para o host (troca dos itens que a importação do XML ligou errado) e
+   * serve para conferir a cópia depois (checkExpected).
+   */
+  function buildExpected(si, moves) {
+    const to = new Map(moves.map((m) => [m.v + "|" + m.t + "|" + m.i, m.to]));
+    const side = (tracks, v) => tracks.map((tr, t) => tr.clips
+      .map((c, i) => [Math.round(to.has(v + "|" + t + "|" + i) ? to.get(v + "|" + t + "|" + i) : c.start), c.item || ""])
+      .sort((a, b) => a[0] - b[0]));
+    return { video: side(si.video, 1), audio: side(si.audio, 0) };
+  }
+
+  /**
+   * Confere a cópia (resposta de syncInfo dela) contra buildExpected: cada clipe
+   * tem de usar o mesmo item que usa na origem. O XML arredonda o início para
+   * quadros → par pelo início mais próximo a até meio quadro.
+   * Devolve { checked, wrong: [{ track, name, start }], missing }.
+   */
+  function checkExpected(expected, ci) {
+    const half = ci.timebase / 2 + TPS / 1000;
+    const out = { checked: 0, wrong: [], missing: 0 };
+    const side = (tracks, exp, label) => tracks.forEach((tr, t) => {
+      const list = exp[t] || [];
+      if (tr.clips.length !== list.length) out.missing += Math.abs(tr.clips.length - list.length);
+      for (const c of tr.clips) {
+        let best = null, bd = Infinity;
+        for (const e of list) { const d = Math.abs(e[0] - c.start); if (d < bd) { bd = d; best = e; } }
+        out.checked++;
+        if (!best || bd > half) { out.missing++; continue; }
+        if (best[1] && String(best[1]) !== String(c.item)) out.wrong.push({ track: label + (t + 1), name: c.name, start: c.start });
+      }
+    });
+    side(ci.video, expected.video, "V");
+    side(ci.audio, expected.audio, "A");
+    return out;
+  }
+
+  return { buildDevices, buildItems, buildMoves, buildExpected, checkExpected, usable };
 });
