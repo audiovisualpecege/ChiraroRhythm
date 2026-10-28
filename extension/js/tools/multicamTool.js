@@ -25,7 +25,7 @@
       minShot: $("mcMinShot"), shortUtter: $("mcShortUtter"), micHold: $("mcMicHold"),
       summary: $("mcSummary"), result: $("mcResult"), canvas: $("mcViz"), vizWrap: $("mcVizWrap"), tooltip: $("mcTooltip"), legend: $("mcLegend"),
       notice: $("mcNotice"), progress: $("mcProgress"), progressBar: $("mcProgressBar"),
-      analyze: $("mcAnalyze"), create: $("mcCreate"), status: $("mcStatus"),
+      analyze: $("mcAnalyze"), create: $("mcCreate"), status: $("mcStatus"), suggest: $("mcSuggest"),
     };
     const prefs = AEStore.loadPrefs("multicam", { interaction: 25, dynamism: 25, minShot: 2.5, shortUtter: 1.5, micHold: 3 });
     const state = { seqId: null, info: null, loading: false, map: null, speech: null, range: null, plan: null, busy: false };
@@ -201,48 +201,44 @@
       return out;
     }
 
-    async function analyze() {
-      if (state.busy) return;
-      await loadSequence(true);
-      if (!state.info) return setStatus(els.status, "Nenhuma sequência aberta na Timeline.", "error");
-      const empty = state.info.video.findIndex((_, t) => { const r = ruleOf("video", t); return isCamera(r) && !(r.people || []).length; });
-      if (empty >= 0) return setStatus(els.status, `V${empty + 1}: marque quem aparece nessa câmera.`, "error");
-      const cams = cameras(), mics = micTracks();
-      if (!cams.length) return setStatus(els.status, "Marque pelo menos uma faixa de vídeo como Câmera.", "error");
-      if (!mics.length) return setStatus(els.status, "Marque o microfone de pelo menos uma pessoa.", "error");
-      setBusy(true);
-      const opened = new Map();
-      try {
-        const range = state.info.range || { from: 0, to: state.info.end };
-        const fromSec = range.from / TPS, toSec = range.to / TPS;
-        const N = Math.max(1, Math.floor((toSec - fromSec) / HOP));
-        const nP = state.map.people.length;
-        const levels = [...Array(nP)].map(() => new Float32Array(N).fill(-120));
-        const issues = [];
-        const clips = [];
-        for (const m of mics) for (const c of state.info.audio[m.track].clips) {
+    function currentRange() {
+      const range = state.info.range || { from: 0, to: state.info.end };
+      return { fromSec: range.from / TPS, toSec: range.to / TPS };
+    }
+
+    /**
+     * Nível (dB a cada 20 ms, na timeline) de grupos de faixas de áudio — cada grupo vira uma
+     * série (o máximo entre as faixas do grupo). Lê os arquivos direto do disco.
+     */
+    async function readLevels(groups, fromSec, toSec, p0, p1) {
+      const N = Math.max(1, Math.floor((toSec - fromSec) / HOP));
+      const levels = groups.map(() => new Float32Array(N).fill(-120));
+      const issues = [], clips = [], opened = new Map();
+      groups.forEach((tracks, g) => {
+        for (const t of tracks) for (const c of state.info.audio[t].clips) {
           if (c.disabled) continue;
           const s = c.start / TPS, e = c.end / TPS;
           if (e <= fromSec || s >= toSec) continue;
-          clips.push({ m, c, s, e });
+          clips.push({ g, c, s, e });
         }
-        const totalSec = clips.reduce((n, x) => n + Math.min(x.e, toSec) - Math.max(x.s, fromSec), 0) || 1;
-        let doneSec = 0;
+      });
+      const totalSec = clips.reduce((n, x) => n + Math.min(x.e, toSec) - Math.max(x.s, fromSec), 0) || 1;
+      let doneSec = 0;
+      try {
         for (let i = 0; i < clips.length; i++) {
-          const { m, c, s, e } = clips[i];
+          const { g, c, s, e } = clips[i];
           const a = Math.max(s, fromSec), b = Math.min(e, toSec);
-          setStatus(els.status, `Lendo microfone ${i + 1} de ${clips.length}: ${c.name}`);
+          setStatus(els.status, `Lendo áudio ${i + 1} de ${clips.length}: ${c.name}`);
           try {
             if (!c.path) throw new Error("clipe sem arquivo de mídia");
             let media = opened.get(c.path);
             if (!media) { media = AEContainers.openMedia(c.path); opened.set(c.path, media); }
             const srcFrom = c.inPoint / TPS + (a - s);
-            const env = await AELevels.mediaEnvelope(media, srcFrom, srcFrom + (b - a), AEDecode.decode, (f) => progress(0.9 * (doneSec + f * (b - a)) / totalSec));
+            const env = await AELevels.mediaEnvelope(media, srcFrom, srcFrom + (b - a), AEDecode.decode, (f) => progress(p0 + (p1 - p0) * (doneSec + f * (b - a)) / totalSec));
             const ms = env.ms, off = Math.round((env.startSec - srcFrom) * 1000); // env pode começar um pouco antes
-            const lv = levels[m.person];
+            const lv = levels[g];
             for (let k = Math.max(0, Math.ceil((a - fromSec) / HOP)); k < Math.min(N, Math.floor((b - fromSec) / HOP)); k++) {
-              const t = fromSec + k * HOP;
-              const i0 = Math.floor((t - a) * 1000) - off;
+              const i0 = Math.floor((fromSec + k * HOP - a) * 1000) - off;
               if (i0 < 0 || i0 + 20 > ms.length) continue;
               let sum = 0;
               for (let q = 0; q < 20; q++) sum += ms[i0 + q];
@@ -254,7 +250,164 @@
           }
           doneSec += b - a;
         }
+      } finally {
         for (const md of opened.values()) try { md.src.close(); } catch (e) {}
+      }
+      return { levels, issues };
+    }
+
+    // --------------------------------------------------------------- sugerir mapa
+    /** quadro JPEG → 64×36 cinza normalizado (para achar o corte ao vivo) */
+    async function jpegToGray(jpeg) {
+      const bmp = await createImageBitmap(new Blob([jpeg], { type: "image/jpeg" }));
+      const cv = document.createElement("canvas");
+      cv.width = 64; cv.height = 36;
+      const g = cv.getContext("2d");
+      g.drawImage(bmp, 0, 0, 64, 36);
+      const d = g.getImageData(0, 0, 64, 36).data, gray = new Uint8Array(64 * 36);
+      for (let i = 0; i < gray.length; i++) gray[i] = (d[i * 4] * 0.299 + d[i * 4 + 1] * 0.587 + d[i * 4 + 2] * 0.114) | 0;
+      return AEMcMap.normalizeGray(gray);
+    }
+    const clipAt = (tr, t) => tr.clips.find((c) => !c.disabled && c.path && c.start / TPS <= t && t < c.end / TPS);
+    const mediaTime = (c, t) => c.inPoint / TPS + (t - c.start / TPS);
+
+    /**
+     * Preenche o mapa sozinho (só o que está em Ignorar): mix e microfones pelo áudio, uma pessoa
+     * por microfone; corte ao vivo pelos quadros; quem aparece em cada câmera pela boca nos trechos
+     * em que uma pessoa fala sozinha. ~2 min (usa o ffmpeg e o detector de rosto do Sincronizar).
+     */
+    async function suggestMap() {
+      if (state.busy) return;
+      await loadSequence(true);
+      if (!state.info) return setStatus(els.status, "Nenhuma sequência aberta na Timeline.", "error");
+      if (!root.AESyncVisual || !root.AEMcMap) return setStatus(els.status, "A sugestão do mapa não está disponível nesta instalação.", "error");
+      const ffOk = AESyncFfmpeg.find();
+      if (!ffOk.ok) return setStatus(els.status, "A sugestão do mapa precisa do ffmpeg do Rhythm: " + ffOk.reason, "error");
+      const m = state.map, info = state.info, t0 = Date.now();
+      setBusy(true);
+      let eng = null;
+      const notes = [];
+      try {
+        const { fromSec, toSec } = currentRange();
+        // 1) áudio: faixas sem vínculo com vídeo = microfones ou mix
+        const linked = new Set();
+        info.video.forEach((tr) => tr.clips.forEach((c) => (c.linked || []).forEach(([at]) => linked.add(at))));
+        const free = info.audio.map((tr, t) => t).filter((t) => !linked.has(t) && info.audio[t].clips.some((c) => c.path && !c.disabled));
+        if (!free.length) throw new Error("não achei faixas de áudio separadas (microfones) na sequência.");
+        setStatus(els.status, "Lendo os microfones…");
+        const { levels } = await readLevels(free.map((t) => [t]), fromSec, toSec, 0, 0.3);
+        const mix = AEMcMap.detectMix(levels).mix;
+        const micTracks = free.filter((_, i) => !mix[i]);
+        free.forEach((t, i) => { if (mix[i] && ruleOf("audio", t).type === "ignore") { m.audio[t] = { type: "disable" }; notes.push(`A${t + 1} = mix`); } });
+        // pessoa de cada microfone: a já marcada, ou uma nova
+        const personOf = new Map();
+        for (const t of micTracks) {
+          const r = ruleOf("audio", t);
+          if (r.type === "mic") { personOf.set(t, r.people[0]); continue; }
+          if (r.type !== "ignore") continue; // Desativar escolhido à mão
+          const used = new Set([...personOf.values(), ...Object.values(m.audio).filter((x) => x.type === "mic").map((x) => x.people[0])]);
+          let p = 0;
+          while (used.has(p)) p++;
+          while (m.people.length <= p) m.people.push(`Pessoa ${m.people.length + 1}`);
+          m.audio[t] = { type: "mic", people: [p] };
+          personOf.set(t, p);
+        }
+        const nP = m.people.length;
+        const groups = [...Array(nP)].map((_, p) => micTracks.filter((t) => personOf.get(t) === p).map((t) => free.indexOf(t)));
+        const N = levels[0].length;
+        const personLv = groups.map((idx) => { const lv = new Float32Array(N).fill(-120); for (const i of idx) for (let k = 0; k < N; k++) if (levels[i][k] > lv[k]) lv[k] = levels[i][k]; return lv; });
+        const vad = AEMcVad.analyze(personLv);
+        const speech = vad.segs.map((s) => s.map(([x, y]) => [x + fromSec, y + fromSec]));
+        // 2) corte ao vivo: quadro igual ao de outra faixa quase sempre
+        const exe = ffOk.exe, probes = new Map();
+        const probe = (f) => { if (!probes.has(f)) probes.set(f, AESyncFfmpeg.probe(exe, f)); return probes.get(f); };
+        const vids = info.video.map((tr, t) => t).filter((t) => info.video[t].clips.some((c) => c.path && !c.disabled && c.kind !== "graphic"));
+        const times = [...Array(8)].map((_, i) => fromSec + ((toSec - fromSec) * (i + 0.5)) / 8);
+        const frames = [];
+        for (let vi = 0; vi < vids.length; vi++) {
+          const tr = info.video[vids[vi]], row = [];
+          setStatus(els.status, `Comparando as câmeras (V${vids[vi] + 1})…`);
+          for (const t of times) {
+            const c = clipAt(tr, t);
+            let still = null;
+            if (c) { try { await AESyncFfmpeg.frames(exe, c.path, probe(c.path), { ss: mediaTime(c, t), still: true }, (j) => (still = j)); } catch (e) {} }
+            row.push(still ? await jpegToGray(still) : null);
+          }
+          frames.push(row);
+          progress(0.3 + 0.15 * (vi + 1) / vids.length);
+        }
+        const prog = AEMcMap.detectProgram(frames);
+        if (prog >= 0 && ruleOf("video", vids[prog]).type === "ignore") { setVideoRule(vids[prog], { type: "disable" }); notes.push(`V${vids[prog] + 1} = corte ao vivo`); }
+        // 3) quem aparece em cada câmera, pela boca
+        const windows = AEMcMap.pickWindows(speech, fromSec, toSec);
+        if (!windows.length) throw new Error("não achei trechos em que uma pessoa fala sozinha.");
+        eng = AESyncVisual.create({});
+        await eng.pool.ready;
+        const camTracks = vids.filter((t, i) => i !== prog && ruleOf("video", t).type === "ignore");
+        for (let ci = 0; ci < camTracks.length; ci++) {
+          const v = camTracks[ci], tr = info.video[v];
+          setStatus(els.status, `Procurando rostos na V${v + 1} (${ci + 1} de ${camTracks.length})…`);
+          // o clipe que cobre mais trechos dá os rostos
+          const byClip = new Map();
+          windows.forEach((w, wi) => { const c = clipAt(tr, (w.s + w.e) / 2); if (c) (byClip.get(c) || byClip.set(c, []).get(c)).push(wi); });
+          const main = [...byClip.entries()].sort((a, b) => b[1].length - a[1].length)[0];
+          if (!main) { notes.push(`V${v + 1}: sem clipe nos trechos de fala`); continue; }
+          const c = main[0], cinfo = probe(c.path), sig = { cancelled: false };
+          const people = await eng.findPeople(c.path, cinfo, sig);
+          if (!people.length) { notes.push(`V${v + 1}: nenhum rosto`); continue; }
+          const motion = people.map(() => windows.map(() => null));
+          for (const wi of main[1]) {
+            const w = windows[wi];
+            const ser = await eng.mouthSeries(c.path, cinfo, people, { ss: mediaTime(c, w.s), t: w.e - w.s }, sig);
+            people.forEach((_, f) => {
+              let prev = null, s = 0, n = 0;
+              for (const fr of ser) { const x = fr.open[f]; if (x == null) { prev = null; continue; } if (prev != null) { s += Math.abs(x - prev); n++; } prev = x; }
+              motion[f][wi] = n ? s / n : null;
+            });
+          }
+          const res = AEMcMap.cameraPeople(AEMcMap.faceScores(motion, windows, nP), nP);
+          if (res.people.length) setVideoRule(v, { type: "camera", people: res.people });
+          else notes.push(`V${v + 1}: rostos sem boca casada com algum microfone`);
+          progress(0.45 + 0.55 * (ci + 1) / camTracks.length);
+        }
+        saveMap(); renderPeople(); renderMap();
+        // as falas já estão prontas: a prévia aparece sem analisar de novo
+        state.speech = speech;
+        state.range = { from: fromSec, to: toSec, marked: !!info.range };
+        state.issues = [];
+        state.warnSync = false;
+        replan();
+        setStatus(els.status, `Mapa sugerido em ${formatDuration((Date.now() - t0) / 1000)}${notes.length ? ` (${notes.join(" · ")})` : ""}. Confira as faixas, dê nome às pessoas e ajuste se precisar.`, "success");
+      } catch (err) {
+        setStatus(els.status, "Não deu para sugerir o mapa: " + err.message, "error");
+      } finally {
+        if (eng) try { eng.close(); } catch (e) {}
+        setBusy(false);
+      }
+    }
+
+    /** regra de vídeo vinda da sugestão (com o áudio vinculado indo junto para Desativar) */
+    function setVideoRule(t, rule) {
+      const m = state.map;
+      m.video[t] = rule;
+      for (const at of linkedAudioTracks(t)) if (!m.audio[at] || m.audio[at].type === "ignore") m.audio[at] = { type: "disable" };
+    }
+
+    async function analyze() {
+      if (state.busy) return;
+      await loadSequence(true);
+      if (!state.info) return setStatus(els.status, "Nenhuma sequência aberta na Timeline.", "error");
+      const empty = state.info.video.findIndex((_, t) => { const r = ruleOf("video", t); return isCamera(r) && !(r.people || []).length; });
+      if (empty >= 0) return setStatus(els.status, `V${empty + 1}: marque quem aparece nessa câmera.`, "error");
+      const cams = cameras(), mics = micTracks();
+      if (!cams.length) return setStatus(els.status, "Marque pelo menos uma faixa de vídeo como Câmera.", "error");
+      if (!mics.length) return setStatus(els.status, "Marque o microfone de pelo menos uma pessoa.", "error");
+      setBusy(true);
+      try {
+        const { fromSec, toSec } = currentRange();
+        const nP = state.map.people.length;
+        const groups = [...Array(nP)].map((_, p) => mics.filter((m) => m.person === p).map((m) => m.track));
+        const { levels, issues } = await readLevels(groups, fromSec, toSec, 0, 0.9);
         setStatus(els.status, "Detectando quem fala…");
         const vad = AEMcVad.analyze(levels);
         state.speech = vad.segs.map((segs) => segs.map(([x, y]) => [x + fromSec, y + fromSec]));
@@ -463,6 +616,7 @@
       els.analyze.disabled = state.busy || !state.info;
       els.create.disabled = state.busy || !state.plan;
       els.addPerson.disabled = state.busy || !state.info;
+      els.suggest.disabled = state.busy || !state.info;
     }
     function bindRange(el, val, key) {
       const show = () => { val.textContent = el.value; };
@@ -477,6 +631,7 @@
       el.addEventListener("change", () => { prefs[key] = Number(el.value); AEStore.savePrefs("multicam", prefs); replan(); });
     }
     els.analyze.addEventListener("click", analyze);
+    els.suggest.addEventListener("click", suggestMap);
     els.create.addEventListener("click", create);
     refreshButtons();
 

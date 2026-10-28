@@ -625,6 +625,43 @@ test("sincronizar: conferência da cópia pega clipe ligado ao arquivo de mesmo 
 });
 
 // ---------------------------------------------------------------- multicâmera
+test("multicâmera: sugerir mapa (mix, corte ao vivo, trechos, rosto → pessoa, aberta)", () => {
+  const M = require(path.join(base, "multicam", "mcMap.js"));
+  // mix = soma dos microfones: acompanha o "mais alto" dos outros
+  let seed = 3;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const N = 3000, mics = [0, 1, 2].map(() => new Float32Array(N));
+  for (let k = 0; k < N; k++) { const who = Math.floor(k / 300) % 3; mics.forEach((m, i) => (m[k] = i === who ? -20 + 3 * rnd() : -60 + 2 * rnd())); }
+  const mix = new Float32Array(N).map((_, k) => 10 * Math.log10(mics.reduce((s, m) => s + Math.pow(10, m[k] / 10), 0)) - 3);
+  const r = M.detectMix([mics[0], mix, mics[1], mics[2]]);
+  assert.deepStrictEqual(r.mix, [false, true, false, false]);
+  assert.deepStrictEqual(M.detectMix([mics[0], mics[1], mics[2]]).mix, [false, false, false], "sem mix: nenhuma");
+  // corte ao vivo: faixa 2 repete a 0 ou a 1
+  const fr = (seedK) => { let x = seedK; return M.normalizeGray(Uint8Array.from({ length: 64 * 36 }, () => ((x = (x * 16807) % 2147483647) % 256))); };
+  const A = [1, 2, 3, 4].map((k) => fr(k * 11)), B = [1, 2, 3, 4].map((k) => fr(k * 13 + 5));
+  assert.strictEqual(M.detectProgram([A, B, [A[0], B[1], A[2], B[3]]]), 2);
+  assert.strictEqual(M.detectProgram([A, B, [1, 2, 3, 4].map((k) => fr(k * 17 + 9))]), -1, "sem corte ao vivo");
+  // trechos: só falas solo, até 2 por pessoa
+  const speech = [[[10, 25], [100, 120]], [[30, 40], [60, 62], [130, 150]], [[24, 35]]];
+  const w = M.pickWindows(speech, 0, 160, { perPerson: 2, winLen: 10 });
+  assert(w.every((x) => !(x.p === 2)), "pessoa 2 só fala sobreposta → sem trecho");
+  assert.strictEqual(w.filter((x) => x.p === 0).length, 2);
+  assert(w.every((x) => x.e - x.s <= 10 + 1e-9));
+  // rosto → pessoa: rosto 0 mexe nos trechos da P1, rosto 1 nos da P0
+  const wins = [{ p: 0 }, { p: 0 }, { p: 1 }, { p: 1 }];
+  const motion = [[0.2, 0.25, 1.0, 0.9], [1.1, 0.8, 0.2, 0.3]];
+  const sc = M.faceScores(motion, wins, 3);
+  const cam = M.cameraPeople(sc, 3);
+  assert.deepStrictEqual(cam.faces, [1, 0]);
+  assert.deepStrictEqual(cam.people, [0, 1]);
+  assert.strictEqual(cam.wide, false);
+  // dois rostos querendo a mesma pessoa: o mais forte fica com ela
+  const dup = M.cameraPeople([[2.5, 0.5], [1.8, 1.4]], 2);
+  assert.deepStrictEqual(dup.faces, [0, 1]);
+  // 3 rostos com 4 pessoas = aberta
+  assert.deepStrictEqual(M.cameraPeople([[1, 1, 1, 1], [1, 1, 1, 1], [1, 1, 1, 1]], 4).people, [0, 1, 2, 3]);
+});
+
 test("multicâmera: detecção de fala separa a voz própria do vazamento no outro microfone", () => {
   const V = require(path.join(base, "multicam", "mcVad.js"));
   const N = 3000; // 60 s a 20 ms

@@ -469,7 +469,7 @@
       return { decision, reason: decision ? "" : "boca não bateu com o gravador", clap: clap || (cands[0] ? { t: cands[0].t } : null), confirm, people, windows: results, info, ms: Date.now() - t0 };
     }
 
-    return { ffmpeg: ff, analyzeFile, findPeople, duration, close: () => pool.close(), pool };
+    return { ffmpeg: ff, analyzeFile, findPeople, mouthSeries, duration, close: () => pool.close(), pool };
   }
 
   /** Disponibilidade (para a interface), sem criar workers. */

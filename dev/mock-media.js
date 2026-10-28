@@ -14,7 +14,7 @@
     return ms;
   };
   AELevels.mediaEnvelope = async (media, from, to, decode, onProgress) => {
-    const mic = media && media.path && /MIC\d/.test(media.path) ? micMs(media.path.match(/MIC\d/)[0]) : null;
+    const mic = media && media.path && /MIC\d|MIX/.test(media.path) ? micMs(media.path.match(/MIC\d|MIX/)[0]) : null;
     if (mic) { onProgress && onProgress(1); const a = Math.max(0, Math.floor(from * 1000)), b = Math.min(mic.length, Math.ceil(to * 1000)); return { startSec: a / 1000, blockMs: 1, ms: mic.slice(a, b) }; }
     const a = Math.max(0, Math.floor(from * 1000));
     const b = Math.min(ms.length, Math.ceil(to * 1000));

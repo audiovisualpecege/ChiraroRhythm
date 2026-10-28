@@ -382,8 +382,9 @@
 
         <div class="card">
           <h2 class="card-title"><span class="chan">02</span> Faixas</h2>
+          <button class="btn btn--outline btn--sm" id="mcSuggest" type="button" style="margin-bottom:8px">Sugerir mapa</button>
           <div class="mc-map" id="mcMap"></div>
-          <p class="hint" id="mcMapHint" style="margin-top:8px">Abra a sequência já sincronizada na Timeline. Em cada câmera, marque quem aparece (1 pessoa = fechada, algumas = média, todas = aberta) e de quem é cada microfone; o resto fica como está (Ignorar). O áudio embutido de uma câmera (ou do corte ao vivo) vira "Desativar" sozinho quando o vídeo dela é marcado.</p>
+          <p class="hint" id="mcMapHint" style="margin-top:8px">Abra a sequência já sincronizada na Timeline. Em cada câmera, marque quem aparece (1 pessoa = fechada, algumas = média, todas = aberta) e de quem é cada microfone; o resto fica como está (Ignorar). O áudio embutido de uma câmera (ou do corte ao vivo) vira "Desativar" sozinho quando o vídeo dela é marcado. "Sugerir mapa" preenche o que está em Ignorar olhando o áudio e as bocas (~2 min).</p>
         </div>
 
         <div class="card">
@@ -484,6 +485,7 @@
   <script src="js/tools/syncTool.js"></script>
   <script src="js/multicam/mcVad.js"></script>
   <script src="js/multicam/mcPlan.js"></script>
+  <script src="js/multicam/mcMap.js"></script>
   <script src="js/tools/multicamTool.js"></script>
   <script src="js/main.js"></script>
 </body>
