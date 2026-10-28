@@ -379,3 +379,18 @@ select.input option { background: var(--bg-raised); }
 .sync-tc:disabled { color: var(--text-3); cursor: default; }
 .sync-tc:hover:not(:disabled) { text-decoration: underline; }
 .btn--danger-ghost { border-color: var(--danger) !important; color: var(--danger) !important; }
+
+/* ---------------------------------------------------------------- Multicâmera */
+.mc-people { display: flex; flex-direction: column; gap: 6px; }
+.mc-person { display: grid; grid-template-columns: 12px 1fr auto; align-items: center; gap: 8px; }
+.mc-person i { width: 10px; height: 10px; border-radius: 3px; }
+.mc-map { display: flex; flex-direction: column; gap: 6px; }
+.mc-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) minmax(0, 1.2fr); align-items: center; gap: 8px; }
+.mc-row--off .mc-name { color: var(--text-3); }
+.mc-track { font-family: var(--font-mono); font-size: 10.5px; color: var(--text-2); }
+.mc-name { font-size: 11px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mc-who { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.mc-sep { font-size: 10px; letter-spacing: var(--tracking-wide); text-transform: uppercase; color: var(--text-3); margin-top: 4px; }
+.mc-who { align-items: center; padding: 2px 0 4px; }
+.mc-who-label { font-size: 10px; color: var(--text-3); margin-right: 2px; }
+.mc-kind { font-size: 10px; color: var(--text-brand); margin-left: auto; }

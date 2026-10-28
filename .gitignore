@@ -5,6 +5,7 @@ dev/preview.html
 node_modules/
 dev/fixture-frame.png
 dev/fixture-envelope.js
+dev/fixture-mics.js
 
 # repositório público (decisão do usuário 20/10/2026): nada de dados de clientes nem fonte comercial
 CONTEXTO.md

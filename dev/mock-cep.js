@@ -97,6 +97,19 @@
     syncClone: (a) => ({ id: "seq-sync", name: a.name }),
     syncMove: (a) => ({ moved: a.moves.length, failed: [] }),
     syncOpen: () => ({ ok: true }),
+    // Multicâmera: layout de um podcast (geral, 3 câmeras com áudio vinculado, 4 microfones, mix)
+    mcInfo: () => {
+      const len = 8 * 60 * TPS, cam = (i, name, off) => ({ id: 'v' + i, name, start: off, end: len, inPoint: 0, path: 'D:/podcast/' + name, item: 'it' + i, kind: 'video', linked: [[i, 0]], speed: 1, reversed: false });
+      const a = (i, name, off) => ({ id: 'a' + i, name, start: off || 0, end: len, inPoint: 0, path: 'D:/podcast/' + name, item: 'ia' + i, disabled: false });
+      const off = Math.round(4.4378 * TPS / TB) * TB;
+      return {
+        seqId: seq.id, name: 'Podcast (teste)', timebase: TB, end: len, range: null,
+        video: [['geral.mp4', 0], ['CAM 1.mp4', off], ['CAM 2.mp4', off], ['CAM 3.mp4', off]].map(([n, o], i) => ({ index: i, name: 'Video ' + (i + 1), locked: false, clips: [cam(i, n, o)] })),
+        audio: [['geral.mp4', 0], ['CAM 1.mp4', off], ['CAM 2.mp4', off], ['CAM 3.mp4', off], ['MIC1.wav'], ['MIC2.wav'], ['MIC3.wav'], ['MIC4.wav'], ['mix.wav']].map(([n, o], i) => ({ index: i, name: 'Audio ' + (i + 1), locked: false, clips: [a(i, n, o)] })),
+      };
+    },
+    mcStart: (a) => { window.__MC__ = { n: 0, total: 40 }; return { id: 'seq-mc', name: a.name, total: 40 }; },
+    mcStep: () => { const J = window.__MC__; J.n = Math.min(J.total, J.n + 7); return { done: J.n >= J.total, processed: J.n, total: J.total, razors: Math.min(J.n, 30), on: 120, off: 180 }; },
   };
   window.AutomacaoEdicao = {
     call(name, json) {

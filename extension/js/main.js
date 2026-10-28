@@ -8,7 +8,7 @@
  */
 (function () {
   const { $ } = AEUI;
-  const TOOL_ORDER = ["silence", "zoom", "interleave", "sync"];
+  const TOOL_ORDER = ["silence", "zoom", "interleave", "sync", "multicam"];
 
   const app = {
     info: null,

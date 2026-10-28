@@ -624,6 +624,62 @@ test("sincronizar: conferência da cópia pega clipe ligado ao arquivo de mesmo 
   assert.strictEqual(far.missing, 1);
 });
 
+// ---------------------------------------------------------------- multicâmera
+test("multicâmera: detecção de fala separa a voz própria do vazamento no outro microfone", () => {
+  const V = require(path.join(base, "multicam", "mcVad.js"));
+  const N = 3000; // 60 s a 20 ms
+  let seed = 7;
+  const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647 - 0.5);
+  // A fala em 5–20 s e 40–45 s; B fala em 25–35 s. Ganho de B 15 dB abaixo do de A. Vazamento: −18 dB.
+  const a = new Float32Array(N), b = new Float32Array(N);
+  for (let k = 0; k < N; k++) {
+    const t = k * 0.02;
+    const sa = (t >= 5 && t < 20) || (t >= 40 && t < 45), sb = t >= 25 && t < 35;
+    const va = sa ? -20 + 3 * rnd() : -200, vb = sb ? -35 + 3 * rnd() : -200;
+    const pw = (db) => Math.pow(10, db / 10);
+    a[k] = 10 * Math.log10(pw(-60 + rnd()) + pw(va) + pw(vb - 18 + 15)); // vazamento de B em A (B é 15 dB mais baixo na origem)
+    b[k] = 10 * Math.log10(pw(-75 + rnd()) + pw(vb) + pw(va - 18 - 15));
+  }
+  const r = V.analyze([a, b]);
+  const total = (segs, x, y) => segs.reduce((n, [s, e]) => n + Math.max(0, Math.min(e, y) - Math.max(s, x)), 0);
+  assert(total(r.segs[0], 5, 20) > 14 && total(r.segs[0], 40, 45) > 4.5, "A fala nos trechos dela");
+  assert(total(r.segs[0], 25, 35) < 0.5, "A não é ativado pelo vazamento de B");
+  assert(total(r.segs[1], 25, 35) > 9.5, "B fala no trecho dele, mesmo com ganho 15 dB menor");
+  assert(total(r.segs[1], 5, 20) + total(r.segs[1], 40, 45) < 0.5, "B não é ativado pelo vazamento de A");
+});
+
+test("multicâmera: plano de câmeras (fala curta, plano mínimo, close → média → aberta) e microfones", () => {
+  const P = require(path.join(base, "multicam", "mcPlan.js"));
+  const cams = [
+    { kind: "close", people: [0] },
+    { kind: "media", people: [1, 2] },
+    { kind: "aberta", people: [0, 1, 2] },
+  ];
+  // 0 fala 0–30 s com um "uhum" de 1 fala em 12 s (0,6 s); 1 fala 31–50; 2 fala 51–70
+  const speech = [[[0, 10], [10.5, 30]], [[12, 12.6], [31, 50]], [[51, 70]]];
+  const opt = { dynamism: 0, interaction: 0 };
+  const shots = P.planCameras(speech, cams, 0, 70, opt);
+  const camAt = (t) => shots.find((s) => s.s <= t && t < s.e).cam;
+  assert.strictEqual(camAt(12.3), 0, "o 'uhum' não tira a câmera de quem fala");
+  assert.strictEqual(camAt(20), 0, "pessoa 0 tem close");
+  assert.strictEqual(camAt(40), 1, "pessoa 1 sem close → média que a mostra");
+  assert.strictEqual(camAt(60), 1, "pessoa 2 também está na média");
+  assert(shots.every((s) => s.e - s.s >= 2.5 - 1e-9), "plano mínimo");
+  assert(Math.abs(shots.find((s) => s.cam === 1).s - 30.8) < 0.11, "corte ~0,2 s antes da fala");
+  // sem close nem média para a pessoa 2 → aberta
+  const shots2 = P.planCameras(speech, [cams[0], cams[2]], 0, 70, opt);
+  assert.strictEqual(shots2.find((s) => s.s <= 60 && 60 < s.e).cam, 1);
+  // microfones: folga 0,3 s e pausa de até 3 s da mesma pessoa fica ligada
+  const mics = P.planMics([[[0, 10], [12, 20], [30, 31]]], 0, 70, { micPad: 0.3, micHold: 3 });
+  assert.deepStrictEqual(mics[0].map((g) => g.map((v) => Math.round(v * 10) / 10)), [[0, 20.3], [29.7, 31.3]]);
+  // respiro com a aberta numa fala longa (dinamismo alto)
+  const longSpeech = [[...Array(30)].map((_, i) => [i * 4, i * 4 + 3.5])]; // 120 s com pausas de 0,5 s
+  const sh = P.planCameras(longSpeech, [cams[0], cams[2]], 0, 120, { dynamism: 1, interaction: 0 });
+  assert(sh.some((s) => s.cam === 1 && s.e - s.s >= 2.9), "respiro com a aberta");
+  const sh2 = P.planCameras(longSpeech, [cams[0], cams[2]], 0, 120, { dynamism: 1, interaction: 0 });
+  assert.deepStrictEqual(sh, sh2, "determinístico");
+});
+
 test("formatDuration: arredonda o total antes de separar minutos e segundos", () => {
   const sandbox = { window: {} };
   sandbox.root = sandbox.window;

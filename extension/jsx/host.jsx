@@ -1294,6 +1294,136 @@ var AutomacaoEdicao = (function () {
     return { ok: true };
   };
 
+  // ------------------------------------------------------------ Multicâmera
+  /**
+   * Faixas e clipes da sequência ativa (como syncInfo) + marcas de In/Out.
+   * Sem marca o Premiere devolve -101606400000000000 (26.5) → range null.
+   */
+  api.mcInfo = function (args) {
+    var info = api.syncInfo(args);
+    var seq = activeSeq(args.seqId);
+    var range = null;
+    try {
+      var a = ticksOf(seq.getInPointAsTime()), b = ticksOf(seq.getOutPointAsTime());
+      if (a >= 0 && b > a) range = { from: a, to: b };
+    } catch (eR) {}
+    info.range = range;
+    info.end = Number(seq.end);
+    return info;
+  };
+
+  /**
+   * Multicâmera = cópia (clone) + lâmina + ativar/desativar. Não usa XML: a
+   * importação de XML cria um item repetido para cada pedaço (medido 26/10 no
+   * podcast: ~1.700 de 2.600) e a troca pelo original religaria os desativados;
+   * o clone mantém os itens originais. Lâmina (QE track.razor) ~8–19 ms por corte
+   * e NÃO corta o áudio vinculado — a faixa de áudio da câmera recebe os mesmos
+   * cortes. Ativar/desativar ~3 ms por clipe com OUTRA sequência ativa (~12 ms e
+   * redesenho de 30–40 s com a cópia aberta) → essa fase roda com a original na tela.
+   * args: { srcSeqId, name, bin, range: {from,to} ticks,
+   *         video: [regra], audio: [regra] }  regra: "ignore" | "disable" |
+   *         [[a,b], …] (ticks, trechos NO AR) | { cutsLike: índice da faixa de vídeo }
+   */
+  api.mcStart = function (args) {
+    var src = seqById(args.srcSeqId);
+    if (!src) throw new Error("A sequência original sumiu do projeto.");
+    app.enableQE();
+    var before = {};
+    for (var b = 0; b < app.project.sequences.numSequences; b++) before[app.project.sequences[b].sequenceID] = true;
+    if (!src.clone()) throw new Error("O Premiere não conseguiu duplicar a sequência.");
+    var cp = null;
+    for (var j = 0; j < app.project.sequences.numSequences; j++) {
+      var s = app.project.sequences[j];
+      if (!before[s.sequenceID]) cp = s;
+    }
+    if (!cp) throw new Error("A cópia foi criada, mas não a encontrei no projeto.");
+    cp.name = args.name;
+    var rootItem = app.project.rootItem, bin = null;
+    for (var k = 0; k < rootItem.children.numItems; k++) {
+      var ch = rootItem.children[k];
+      if (ch.type === ProjectItemType.BIN && ch.name === args.bin) bin = ch;
+    }
+    if (!bin) bin = rootItem.createBin(args.bin);
+    cp.projectItem.moveBin(bin);
+
+    // trabalho: lâminas (faixa, ticks) dentro do trecho, depois o estado de cada faixa
+    var from = args.range.from, to = args.range.to;
+    var work = [];
+    function cuts(rule) {
+      var p = [from, to];
+      for (var q = 0; q < rule.length; q++) { p.push(rule[q][0]); p.push(rule[q][1]); }
+      var out = [], seen = {};
+      for (var r = 0; r < p.length; r++) if (p[r] >= from && p[r] <= to && !seen[p[r]]) { seen[p[r]] = 1; out.push(p[r]); }
+      return out;
+    }
+    function ruleCuts(rule) {
+      if (rule instanceof Array) return cuts(rule);
+      if (rule && rule.cutsLike != null && args.video[rule.cutsLike] instanceof Array) return cuts(args.video[rule.cutsLike]);
+      if (rule === "disable") return cuts([]);
+      return [];
+    }
+    for (var v = 0; v < args.video.length; v++) { var pv = ruleCuts(args.video[v]); for (var a = 0; a < pv.length; a++) work.push(["r", 1, v, pv[a]]); }
+    for (var au = 0; au < args.audio.length; au++) { var pa = ruleCuts(args.audio[au]); for (var a2 = 0; a2 < pa.length; a2++) work.push(["r", 0, au, pa[a2]]); }
+    for (var v2 = 0; v2 < args.video.length; v2++) if (args.video[v2] !== "ignore") work.push(["s", 1, v2]);
+    for (var au2 = 0; au2 < args.audio.length; au2++) if (args.audio[au2] !== "ignore") work.push(["s", 0, au2]);
+    mcJob = { id: cp.sequenceID, srcId: src.sequenceID, args: args, work: work, next: 0, ci: 0, razors: 0, on: 0, off: 0 };
+    app.project.openSequence(cp.sequenceID); // a lâmina (QE) precisa da cópia ativa
+    return { id: cp.sequenceID, name: cp.name, total: work.length };
+  };
+
+  var mcJob = null;
+
+  /** Um lote do trabalho do mcStart (até args.budgetMs). args: { seqId, budgetMs } */
+  api.mcStep = function (args) {
+    var J = mcJob;
+    if (!J || J.id !== args.seqId) throw new Error("A criação da multicâmera não está em andamento — crie de novo.");
+    var cp = seqById(J.id);
+    if (!cp) { mcJob = null; throw new Error("A cópia sumiu do projeto."); }
+    var budget = Number(args.budgetMs) || 2000, t0 = new Date().getTime();
+    var from = J.args.range.from, to = J.args.range.to;
+    var qs = null, st = null, qtracks = {}; // pegos uma vez por lote (por lâmina custava ~4× mais)
+    while (J.next < J.work.length && new Date().getTime() - t0 < budget) {
+      var w = J.work[J.next];
+      if (w[0] === "r") {
+        if (!qs) {
+          var act = app.project.activeSequence;
+          if (!act || act.sequenceID !== J.id) app.project.openSequence(J.id);
+          app.enableQE();
+          qs = qe.project.getActiveSequence();
+          st = cp.getSettings();
+        }
+        var key = w[1] + ":" + w[2];
+        var qt = qtracks[key] || (qtracks[key] = w[1] ? qs.getVideoTrackAt(w[2]) : qs.getAudioTrackAt(w[2]));
+        qt.razor(timeFromTicks(w[3]).getFormatted(st.videoFrameRate, st.videoDisplayFormat));
+        J.razors++;
+        J.next++;
+        continue;
+      }
+      // estado: com a ORIGINAL na tela (ativar/desativar fica ~4× mais rápido sem redesenhar a cópia)
+      var act2 = app.project.activeSequence;
+      if (!act2 || act2.sequenceID === J.id) app.project.openSequence(J.srcId);
+      var rule = w[1] ? J.args.video[w[2]] : J.args.audio[w[2]];
+      var tr = w[1] ? cp.videoTracks[w[2]] : cp.audioTracks[w[2]];
+      var on = rule instanceof Array ? rule : null;
+      var n = tr.clips.numItems;
+      while (J.ci < n && new Date().getTime() - t0 < budget) {
+        var clip = tr.clips[J.ci++];
+        var mid = (ticksOf(clip.start) + ticksOf(clip.end)) / 2;
+        if (mid < from || mid >= to) continue; // fora do In/Out: como estava
+        var want = false;
+        if (on) for (var q = 0; q < on.length; q++) if (mid >= on[q][0] && mid < on[q][1]) { want = true; break; }
+        if (clip.disabled !== !want) clip.disabled = !want;
+        if (want) J.on++; else J.off++;
+      }
+      if (J.ci < n) break;
+      J.ci = 0;
+      J.next++;
+    }
+    var out = { done: J.next >= J.work.length, processed: J.next, total: J.work.length, razors: J.razors, on: J.on, off: J.off };
+    if (out.done) { mcJob = null; app.project.openSequence(J.id); }
+    return out;
+  };
+
   // ------------------------------------------------------------ dispatch
   return {
     call: function (name, argsJSON) {

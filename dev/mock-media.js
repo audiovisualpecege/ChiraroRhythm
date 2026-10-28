@@ -5,8 +5,17 @@
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   const ms = new Float32Array(bytes.buffer);
-  AEContainers.openMedia = () => ({ src: { close() {} }, info: { kind: "pcm", durationSec: f.durationSec } });
+  AEContainers.openMedia = (p) => ({ path: p, src: { close() {} }, info: { kind: "pcm", durationSec: f.durationSec } });
+  const micMs = (name) => {
+    const M = window.__MICS__; if (!M || !M.mics[name]) return null;
+    const b = atob(M.mics[name]), u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i);
+    const db = new Float32Array(u.buffer), ms = new Float32Array(db.length * 20);
+    for (let i = 0; i < db.length; i++) ms.fill(Math.pow(10, db[i] / 10), i * 20, i * 20 + 20);
+    return ms;
+  };
   AELevels.mediaEnvelope = async (media, from, to, decode, onProgress) => {
+    const mic = media && media.path && /MIC\d/.test(media.path) ? micMs(media.path.match(/MIC\d/)[0]) : null;
+    if (mic) { onProgress && onProgress(1); const a = Math.max(0, Math.floor(from * 1000)), b = Math.min(mic.length, Math.ceil(to * 1000)); return { startSec: a / 1000, blockMs: 1, ms: mic.slice(a, b) }; }
     const a = Math.max(0, Math.floor(from * 1000));
     const b = Math.min(ms.length, Math.ceil(to * 1000));
     for (let i = 1; i <= 5; i++) { onProgress && onProgress(i / 5); await new Promise((r) => setTimeout(r, 60)); }

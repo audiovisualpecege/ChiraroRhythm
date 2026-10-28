@@ -369,6 +369,75 @@
         </div>
       </section>
 
+      <!-- ============================================================ -->
+      <!-- ABA 5 — MULTICÂMERA                                            -->
+      <!-- ============================================================ -->
+      <section class="tool-view" id="tool-multicam" data-tool-title="Multicâmera" role="tabpanel" hidden>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">01</span> Pessoas</h2>
+          <div class="mc-people" id="mcPeople"></div>
+          <button class="btn btn--ghost btn--sm" id="mcAddPerson" type="button" style="margin-top:6px">+ Pessoa</button>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">02</span> Faixas</h2>
+          <div class="mc-map" id="mcMap"></div>
+          <p class="hint" id="mcMapHint" style="margin-top:8px">Abra a sequência já sincronizada na Timeline. Em cada câmera, marque quem aparece (1 pessoa = fechada, algumas = média, todas = aberta) e de quem é cada microfone; o resto fica como está (Ignorar). O áudio embutido de uma câmera (ou do corte ao vivo) vira "Desativar" sozinho quando o vídeo dela é marcado.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">03</span> Ritmo</h2>
+          <div class="grid-2">
+            <div class="field">
+              <label class="field-label" for="mcInteraction">Interação <span class="mono" id="mcInteractionVal"></span></label>
+              <input class="range" id="mcInteraction" type="range" min="0" max="100" step="5" value="25" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="mcDynamism">Dinamismo <span class="mono" id="mcDynamismVal"></span></label>
+              <input class="range" id="mcDynamism" type="range" min="0" max="100" step="5" value="25" />
+            </div>
+            <div class="field">
+              <label class="field-label" for="mcMinShot">Plano mínimo</label>
+              <div class="input-unit"><input class="input" id="mcMinShot" type="number" min="0.5" max="30" step="0.5" value="2.5" /><span class="unit">s</span></div>
+            </div>
+            <div class="field">
+              <label class="field-label" for="mcShortUtter">Fala curta não muda câmera</label>
+              <div class="input-unit"><input class="input" id="mcShortUtter" type="number" min="0" max="10" step="0.5" value="1.5" /><span class="unit">s</span></div>
+            </div>
+            <div class="field field--full">
+              <label class="field-label" for="mcMicHold">Microfone continua ligado em pausas de até</label>
+              <div class="input-unit"><input class="input" id="mcMicHold" type="number" min="0" max="30" step="0.5" value="3" /><span class="unit">s</span></div>
+            </div>
+          </div>
+          <p class="hint" style="margin-top:8px">Interação: mais = vai para a câmera de dupla ou a aberta quando a conversa fica rápida. Dinamismo: mais = respiros com a aberta durante falas longas. A prévia se refaz na hora.</p>
+        </div>
+
+        <div class="card">
+          <h2 class="card-title"><span class="chan">04</span> Prévia</h2>
+          <ul class="summary-list" id="mcSummary"></ul>
+          <div id="mcResult" hidden>
+            <div class="viz">
+              <div class="viz-canvas-wrap" id="mcVizWrap">
+                <canvas id="mcViz"></canvas>
+                <div class="viz-tooltip" id="mcTooltip" hidden></div>
+              </div>
+              <div class="viz-legend" id="mcLegend"></div>
+            </div>
+          </div>
+          <div class="notice" id="mcNotice" hidden style="margin-top:8px"></div>
+        </div>
+
+        <div class="tool-footer">
+          <div class="progress" id="mcProgress" hidden><div class="progress-bar" id="mcProgressBar"></div></div>
+          <div class="actions">
+            <button class="btn btn--outline" id="mcAnalyze" type="button">Analisar</button>
+            <button class="btn btn--primary" id="mcCreate" type="button" disabled>Criar multicâmera</button>
+          </div>
+          <p class="status" id="mcStatus" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
       <!-- Novas automações: crie outra <section class="tool-view" data-tool-title="..."> e um js/tools/<nome>.js -->
     </main>
   </div>
@@ -413,6 +482,9 @@
   <script src="js/sync/syncSlate.js"></script>
   <script src="js/sync/syncVisual.js"></script>
   <script src="js/tools/syncTool.js"></script>
+  <script src="js/multicam/mcVad.js"></script>
+  <script src="js/multicam/mcPlan.js"></script>
+  <script src="js/tools/multicamTool.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>
